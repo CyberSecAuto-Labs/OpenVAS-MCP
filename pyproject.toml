@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "openvas-mcp"
+version = "0.1.0"
+requires-python = ">=3.10"
+dependencies = [
+    "mcp>=1.0.0",
+    "python-gvm>=26.0.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["openvas_mcp*"]
