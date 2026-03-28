@@ -3,6 +3,7 @@
 import sys
 
 from .config import cfg
+from .logging_config import apply_json_formatter
 from .server import mcp
 
 
@@ -19,6 +20,7 @@ def main():
             print(f"  - {m}")
         sys.exit(1)
 
+    apply_json_formatter(cfg.log_level)
     mcp.run()
 
 

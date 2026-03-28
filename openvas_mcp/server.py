@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import xml.etree.ElementTree as ET
 from typing import Any
 
 from mcp.server.fastmcp import Context, FastMCP
 
 from .gvm_client import gmp_session
+
+logger = logging.getLogger(__name__)
 
 mcp = FastMCP("openvas")
 
@@ -53,9 +56,14 @@ def _target_to_dict(target: ET.Element) -> dict[str, Any]:
 @mcp.tool()
 def list_targets() -> list[dict[str, Any]]:
     """Return all scan targets defined in OpenVAS."""
+    logger.info("tool invoked", extra={"tool": "list_targets"})
     with gmp_session() as gmp:
         response = gmp.get_targets()
-    return [_target_to_dict(t) for t in response.findall("target")]
+    result = [_target_to_dict(t) for t in response.findall("target")]
+    logger.info(
+        "tool completed", extra={"tool": "list_targets", "status": "ok", "count": len(result)}
+    )
+    return result
 
 
 @mcp.tool()
@@ -67,6 +75,9 @@ def create_target(name: str, hosts: str, port_list_id: str = "") -> dict[str, An
         hosts: Comma-separated hostnames/IPs or CIDR ranges (e.g. "192.168.1.0/24").
         port_list_id: UUID of the port list to use. Defaults to "All TCP and Nmap top 100 UDP".
     """
+    logger.info(
+        "tool invoked", extra={"tool": "create_target", "params": {"name": name, "hosts": hosts}}
+    )
     # Default: All TCP and Nmap top 100 UDP
     ALL_TCP_NMAP_TOP100_UDP = "730ef368-57e2-11e1-a90f-406186ea4fc5"
     kwargs: dict[str, Any] = {
@@ -76,19 +87,26 @@ def create_target(name: str, hosts: str, port_list_id: str = "") -> dict[str, An
     }
     with gmp_session() as gmp:
         response = gmp.create_target(**kwargs)
-    return {
+    result = {
         "id": response.get("id", ""),
         "status": response.get("status", ""),
         "status_text": response.get("status_text", ""),
     }
+    logger.info("tool completed", extra={"tool": "create_target", "status": "ok"})
+    return result
 
 
 @mcp.tool()
 def list_tasks() -> list[dict[str, Any]]:
     """Return all scan tasks (active and historical)."""
+    logger.info("tool invoked", extra={"tool": "list_tasks"})
     with gmp_session() as gmp:
         response = gmp.get_tasks()
-    return [_task_to_dict(t) for t in response.findall("task")]
+    result = [_task_to_dict(t) for t in response.findall("task")]
+    logger.info(
+        "tool completed", extra={"tool": "list_tasks", "status": "ok", "count": len(result)}
+    )
+    return result
 
 
 @mcp.tool()
@@ -106,6 +124,10 @@ def start_scan(
         scanner_id: UUID of the scanner to use. Defaults to OpenVAS default scanner.
         scan_config_id: UUID of the scan config. Defaults to "Full and fast".
     """
+    logger.info(
+        "tool invoked",
+        extra={"tool": "start_scan", "params": {"name": name, "target_id": target_id}},
+    )
     FULL_AND_FAST = "daba56c8-73ec-11df-a475-002264764cea"
     DEFAULT_SCANNER = "08b69003-5fc2-4037-a479-93b440211c73"
 
@@ -119,7 +141,9 @@ def start_scan(
         task_id = task.get("id", "")
         gmp.start_task(task_id)
 
-    return {"task_id": task_id, "status": "started"}
+    result = {"task_id": task_id, "status": "started"}
+    logger.info("tool completed", extra={"tool": "start_scan", "status": "ok"})
+    return result
 
 
 @mcp.tool()
@@ -129,6 +153,7 @@ async def get_scan_status(task_id: str, ctx: Context) -> dict[str, Any]:
     Args:
         task_id: UUID of the scan task.
     """
+    logger.info("tool invoked", extra={"tool": "get_scan_status", "params": {"task_id": task_id}})
     TERMINAL_STATES = {"Done", "Stopped", "Error"}
     POLL_INTERVAL = 10  # seconds
 
@@ -155,6 +180,7 @@ async def get_scan_status(task_id: str, ctx: Context) -> dict[str, Any]:
         await ctx.info(f"status={status} progress={progress}%")
 
         if status in TERMINAL_STATES:
+            logger.info("tool completed", extra={"tool": "get_scan_status", "status": status})
             return info
 
         await asyncio.sleep(POLL_INTERVAL)
@@ -168,6 +194,13 @@ def fetch_scan_results(task_id: str, min_severity: float = 0.0) -> list[dict[str
         task_id: UUID of the scan task.
         min_severity: Minimum CVSS severity score to include (0.0–10.0). Default 0.0 returns all.
     """
+    logger.info(
+        "tool invoked",
+        extra={
+            "tool": "fetch_scan_results",
+            "params": {"task_id": task_id, "min_severity": min_severity},
+        },
+    )
     with gmp_session() as gmp:
         task_resp = gmp.get_task(task_id)
         task = task_resp.find("task")
@@ -212,4 +245,8 @@ def fetch_scan_results(task_id: str, min_severity: float = 0.0) -> list[dict[str
         )
 
     results.sort(key=lambda r: r["severity"], reverse=True)
+    logger.info(
+        "tool completed",
+        extra={"tool": "fetch_scan_results", "status": "ok", "count": len(results)},
+    )
     return results
