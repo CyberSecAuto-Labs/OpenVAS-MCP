@@ -256,6 +256,6 @@ class TestFetchScanResults:
         assert result["code"] == "validation_error"
         gmp_session_mock.get_task.assert_not_called()
 
-    # get_scan_status is excluded from Phase 1 unit tests — it requires
+    # get_scan_status is excluded from unit tests — it requires
     # asyncio.to_thread, a Context object, and pytest-asyncio scaffolding.
-    # TODO: add async tests in Phase 5 when pytest-asyncio is introduced.
+    # TODO: add async tool tests when pytest-asyncio is introduced.

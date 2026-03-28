@@ -34,4 +34,4 @@ def xml_fromstring(s: str) -> ET.Element:
 
 # Integration tests (require a live GVM instance) are gated behind:
 #   GVM_INTEGRATION=1 pytest tests/integration/
-# Not implemented in Phase 1.
+# Not yet implemented — planned alongside Docker distribution.
