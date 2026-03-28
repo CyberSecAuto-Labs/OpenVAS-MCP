@@ -49,6 +49,8 @@ jobs:
     needs: test
     # Only commit the badge on push — PRs don't write back to the branch
     if: github.event_name == 'push'
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
         with:
