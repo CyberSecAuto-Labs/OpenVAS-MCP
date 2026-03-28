@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 import socket
 from collections.abc import Generator
 from contextlib import contextmanager
@@ -12,12 +11,7 @@ from gvm.connections._unix import AbstractGvmConnection
 from gvm.protocols.gmp import Gmp
 from gvm.transforms import EtreeCheckCommandTransform
 
-DEFAULT_SOCKET_PATH = os.environ.get("GVM_SOCKET_PATH", "/run/gvmd/gvmd.sock")
-GVM_HOST = os.environ.get("GVM_HOST", "")
-GVM_PORT = int(os.environ.get("GVM_PORT", "9393"))
-GVM_TLS = os.environ.get("GVM_TLS", "").lower() in ("1", "true", "yes")
-GVM_USERNAME = os.environ.get("GVM_USERNAME", "admin")
-GVM_PASSWORD = os.environ.get("GVM_PASSWORD", "")
+from .config import cfg
 
 
 class SocketConnection(AbstractGvmConnection):
@@ -26,7 +20,7 @@ class SocketConnection(AbstractGvmConnection):
     def __init__(
         self,
         hostname: str = "127.0.0.1",
-        port: int = 9393,
+        port: int = 9390,
         timeout: int | float | None = 60,
     ) -> None:
         super().__init__(timeout=timeout)
@@ -46,11 +40,11 @@ def _make_connection():
     - TLS if GVM_TLS=true (or 1/yes) and GVM_HOST is set.
     - Plain TCP socket proxy (socat) otherwise when GVM_HOST is set.
     """
-    if GVM_HOST:
-        if GVM_TLS:
-            return TLSConnection(hostname=GVM_HOST, port=GVM_PORT)
-        return SocketConnection(hostname=GVM_HOST, port=GVM_PORT)
-    return UnixSocketConnection(path=DEFAULT_SOCKET_PATH)
+    if cfg.host:
+        if cfg.tls:
+            return TLSConnection(hostname=cfg.host, port=cfg.port)
+        return SocketConnection(hostname=cfg.host, port=cfg.port)
+    return UnixSocketConnection(path=cfg.socket_path)
 
 
 @contextmanager
@@ -59,15 +53,5 @@ def gmp_session() -> Generator[Gmp, None, None]:
     connection = _make_connection()
     transform = EtreeCheckCommandTransform()
     with Gmp(connection=connection, transform=transform) as gmp:
-        gmp.authenticate(GVM_USERNAME, GVM_PASSWORD)
+        gmp.authenticate(cfg.username, cfg.password)
         yield gmp
-
-
-def require_env() -> list[str]:
-    """Return a list of missing required environment variables."""
-    missing = []
-    if not GVM_HOST and not os.path.exists(DEFAULT_SOCKET_PATH):
-        missing.append("GVM_SOCKET_PATH (socket not found) or GVM_HOST")
-    if not GVM_PASSWORD:
-        missing.append("GVM_PASSWORD")
-    return missing

@@ -1,18 +1,24 @@
 """Entry point: python -m openvas_mcp"""
 
-from .gvm_client import require_env
+import sys
+
+from .config import cfg
 from .server import mcp
 
 
 def main():
-    missing = require_env()
-    if missing:
-        import sys
+    try:
+        missing = cfg.missing_required()
+    except ValueError as e:
+        print(f"ERROR: Invalid configuration: {e}")
+        sys.exit(1)
 
+    if missing:
         print("ERROR: Missing required environment variables:")
         for m in missing:
             print(f"  - {m}")
         sys.exit(1)
+
     mcp.run()
 
 
