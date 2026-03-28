@@ -3,3 +3,8 @@
 __pycache__/
 *.pyc
 .env
+
+# Test and coverage artifacts
+.coverage
+coverage.xml
+.pytest_cache/

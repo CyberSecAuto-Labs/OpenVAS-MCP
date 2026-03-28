@@ -62,6 +62,22 @@ class TestListTargets:
         assert result[0]["name"] == "test-target"
         assert result[0]["hosts"] == "10.0.0.1"
 
+    def test_gmp_response_error(self, gmp_session_mock):
+        from gvm.errors import GvmResponseError
+
+        gmp_session_mock.get_targets.side_effect = GvmResponseError("400", "bad request")
+        result = list_targets()
+        assert result["error"] is True
+        assert result["code"] == "gvm_response_error"
+
+    def test_gmp_server_error(self, gmp_session_mock):
+        from gvm.errors import GvmServerError
+
+        gmp_session_mock.get_targets.side_effect = GvmServerError("500", "internal error")
+        result = list_targets()
+        assert result["error"] is True
+        assert result["code"] == "gvm_server_error"
+
     def test_gmp_error_returns_error_dict(self, gmp_session_mock):
         from gvm.errors import GvmError
 
@@ -118,6 +134,22 @@ class TestCreateTarget:
         _, kwargs = gmp_session_mock.create_target.call_args
         assert kwargs["port_list_id"] == "730ef368-57e2-11e1-a90f-406186ea4fc5"
 
+    def test_gmp_response_error(self, gmp_session_mock):
+        from gvm.errors import GvmResponseError
+
+        gmp_session_mock.create_target.side_effect = GvmResponseError("400", "bad request")
+        result = create_target(name="t", hosts="10.0.0.1")
+        assert result["error"] is True
+        assert result["code"] == "gvm_response_error"
+
+    def test_gmp_server_error(self, gmp_session_mock):
+        from gvm.errors import GvmServerError
+
+        gmp_session_mock.create_target.side_effect = GvmServerError("500", "internal error")
+        result = create_target(name="t", hosts="10.0.0.1")
+        assert result["error"] is True
+        assert result["code"] == "gvm_server_error"
+
     def test_gmp_error_returns_error_dict(self, gmp_session_mock):
         from gvm.errors import GvmError
 
@@ -139,6 +171,22 @@ class TestListTasks:
         assert isinstance(result, list)
         assert result[0]["id"] == _VALID_UUID
         assert result[0]["status"] == "Done"
+
+    def test_gmp_response_error(self, gmp_session_mock):
+        from gvm.errors import GvmResponseError
+
+        gmp_session_mock.get_tasks.side_effect = GvmResponseError("400", "bad request")
+        result = list_tasks()
+        assert result["error"] is True
+        assert result["code"] == "gvm_response_error"
+
+    def test_gmp_server_error(self, gmp_session_mock):
+        from gvm.errors import GvmServerError
+
+        gmp_session_mock.get_tasks.side_effect = GvmServerError("500", "internal error")
+        result = list_tasks()
+        assert result["error"] is True
+        assert result["code"] == "gvm_server_error"
 
     def test_gmp_error_returns_error_dict(self, gmp_session_mock):
         from gvm.errors import GvmError
@@ -185,6 +233,36 @@ class TestStartScan:
         result = start_scan(name="scan", target_id=_VALID_UUID, scan_config_id="bad")
         assert result["error"] is True
         assert result["code"] == "validation_error"
+
+    def test_gmp_response_error(self, gmp_session_mock):
+        from gvm.errors import GvmResponseError
+
+        gmp_session_mock.create_task.side_effect = GvmResponseError("400", "bad request")
+        result = start_scan(name="scan", target_id=_VALID_UUID)
+        assert result["error"] is True
+        assert result["code"] == "gvm_response_error"
+
+    def test_gmp_server_error(self, gmp_session_mock):
+        from gvm.errors import GvmServerError
+
+        gmp_session_mock.create_task.side_effect = GvmServerError("500", "internal error")
+        result = start_scan(name="scan", target_id=_VALID_UUID)
+        assert result["error"] is True
+        assert result["code"] == "gvm_server_error"
+
+    def test_gmp_error(self, gmp_session_mock):
+        from gvm.errors import GvmError
+
+        gmp_session_mock.create_task.side_effect = GvmError("fail")
+        result = start_scan(name="scan", target_id=_VALID_UUID)
+        assert result["error"] is True
+        assert result["code"] == "gvm_error"
+
+    def test_connection_error(self, gmp_session_mock):
+        gmp_session_mock.create_task.side_effect = OSError("refused")
+        result = start_scan(name="scan", target_id=_VALID_UUID)
+        assert result["error"] is True
+        assert result["code"] == "connection_error"
 
 
 # ---------------------------------------------------------------------------
@@ -255,6 +333,36 @@ class TestFetchScanResults:
         assert result["error"] is True
         assert result["code"] == "validation_error"
         gmp_session_mock.get_task.assert_not_called()
+
+    def test_gmp_response_error(self, gmp_session_mock):
+        from gvm.errors import GvmResponseError
+
+        gmp_session_mock.get_task.side_effect = GvmResponseError("400", "bad request")
+        result = fetch_scan_results(task_id=_VALID_UUID)
+        assert result["error"] is True
+        assert result["code"] == "gvm_response_error"
+
+    def test_gmp_server_error(self, gmp_session_mock):
+        from gvm.errors import GvmServerError
+
+        gmp_session_mock.get_task.side_effect = GvmServerError("500", "internal error")
+        result = fetch_scan_results(task_id=_VALID_UUID)
+        assert result["error"] is True
+        assert result["code"] == "gvm_server_error"
+
+    def test_gmp_error(self, gmp_session_mock):
+        from gvm.errors import GvmError
+
+        gmp_session_mock.get_task.side_effect = GvmError("fail")
+        result = fetch_scan_results(task_id=_VALID_UUID)
+        assert result["error"] is True
+        assert result["code"] == "gvm_error"
+
+    def test_connection_error(self, gmp_session_mock):
+        gmp_session_mock.get_task.side_effect = OSError("refused")
+        result = fetch_scan_results(task_id=_VALID_UUID)
+        assert result["error"] is True
+        assert result["code"] == "connection_error"
 
     # get_scan_status is excluded from unit tests — it requires
     # asyncio.to_thread, a Context object, and pytest-asyncio scaffolding.
