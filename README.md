@@ -1,5 +1,7 @@
 # OpenVAS-MCP
 
+![Coverage](docs/coverage-badge.svg)
+
 An MCP (Model Context Protocol) server that bridges AI agents to [OpenVAS / Greenbone Vulnerability Management](https://www.greenbone.net/). It translates MCP tool calls into GMP (Greenbone Management Protocol) API calls, returning structured results to the AI agent.
 
 ```
@@ -29,9 +31,10 @@ The server is configured via environment variables:
 |---|---|---|
 | `GVM_SOCKET_PATH` | `/run/gvmd/gvmd.sock` | Path to gvmd Unix socket |
 | `GVM_HOST` | — | If set, connect via TLS instead of socket |
-| `GVM_PORT` | `9393` | TLS port (only used when `GVM_HOST` is set) |
+| `GVM_PORT` | `9390` | TLS port (only used when `GVM_HOST` is set) |
 | `GVM_USERNAME` | `admin` | GVM username |
 | `GVM_PASSWORD` | — | GVM password (required) |
+| `LOG_LEVEL` | `INFO` | Logging level (`DEBUG`, `INFO`, `WARNING`, `ERROR`) |
 
 ## Running
 
@@ -86,4 +89,4 @@ The agent will call:
 
 ## License
 
-MIT
+Apache 2.0
