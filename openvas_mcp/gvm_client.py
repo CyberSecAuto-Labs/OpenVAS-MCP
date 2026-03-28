@@ -4,14 +4,13 @@ from __future__ import annotations
 
 import os
 import socket
+from collections.abc import Generator
 from contextlib import contextmanager
-from typing import Generator, Union
 
 from gvm.connections import TLSConnection, UnixSocketConnection
 from gvm.connections._unix import AbstractGvmConnection
 from gvm.protocols.gmp import Gmp
 from gvm.transforms import EtreeCheckCommandTransform
-
 
 DEFAULT_SOCKET_PATH = os.environ.get("GVM_SOCKET_PATH", "/run/gvmd/gvmd.sock")
 GVM_HOST = os.environ.get("GVM_HOST", "")
@@ -28,7 +27,7 @@ class SocketConnection(AbstractGvmConnection):
         self,
         hostname: str = "127.0.0.1",
         port: int = 9393,
-        timeout: Union[int, float, None] = 60,
+        timeout: int | float | None = 60,
     ) -> None:
         super().__init__(timeout=timeout)
         self.hostname = hostname

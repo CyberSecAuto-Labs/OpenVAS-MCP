@@ -8,6 +8,7 @@ def main():
     missing = require_env()
     if missing:
         import sys
+
         print("ERROR: Missing required environment variables:")
         for m in missing:
             print(f"  - {m}")

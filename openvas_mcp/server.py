@@ -133,6 +133,7 @@ async def get_scan_status(task_id: str, ctx: Context) -> dict[str, Any]:
     POLL_INTERVAL = 10  # seconds
 
     while True:
+
         def _fetch():
             with gmp_session() as gmp:
                 return gmp.get_task(task_id)
@@ -197,16 +198,18 @@ def fetch_scan_results(task_id: str, min_severity: float = 0.0) -> list[dict[str
         if severity < min_severity:
             continue
 
-        results.append({
-            "id": result.get("id", ""),
-            "name": _elem_text(result, "name"),
-            "host": result.findtext("host") or "",
-            "port": result.findtext("port") or "",
-            "severity": severity,
-            "threat": _elem_text(result, "threat"),
-            "description": _elem_text(result, "description"),
-            "cve": [ref.get("id", "") for ref in result.findall(".//ref[@type='cve']")],
-        })
+        results.append(
+            {
+                "id": result.get("id", ""),
+                "name": _elem_text(result, "name"),
+                "host": result.findtext("host") or "",
+                "port": result.findtext("port") or "",
+                "severity": severity,
+                "threat": _elem_text(result, "threat"),
+                "description": _elem_text(result, "description"),
+                "cve": [ref.get("id", "") for ref in result.findall(".//ref[@type='cve']")],
+            }
+        )
 
     results.sort(key=lambda r: r["severity"], reverse=True)
     return results
