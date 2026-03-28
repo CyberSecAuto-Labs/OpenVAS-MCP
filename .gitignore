@@ -8,3 +8,6 @@ __pycache__/
 .coverage
 coverage.xml
 .pytest_cache/
+
+# Coverage badge — generated and committed by CI, not locally
+docs/coverage-badge.svg
