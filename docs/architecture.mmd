@@ -1,0 +1,29 @@
+flowchart TD
+    subgraph Client["Client environment"]
+        agent["AI Agent<br/>(e.g. Claude)"]
+        mcp_client["MCP Client"]
+    end
+
+    subgraph Server["OpenVAS-MCP server"]
+        server["server.py<br/>@mcp.tool definitions"]
+        config["config.py<br/>env vars + validation"]
+        logging["logging_config.py<br/>JSON → stderr"]
+        gvm_client["gvm_client.py<br/>gmp_session()"]
+    end
+
+    subgraph GVM["OpenVAS / Greenbone"]
+        gvmd["gvmd<br/>GMP API"]
+        scanner["ospd-openvas<br/>scanner"]
+    end
+
+    agent -->|"natural language"| mcp_client
+    mcp_client -->|"MCP tool call<br/>(stdio or HTTP/SSE)"| server
+    server --> config
+    server --> logging
+    server -->|"validate → call"| gvm_client
+    gvm_client -->|"GMP / XML<br/>(Unix socket or TLS)"| gvmd
+    gvmd --> scanner
+    gvmd -->|"XML response"| gvm_client
+    gvm_client -->|"structured dict"| server
+    server -->|"JSON result"| mcp_client
+    mcp_client -->|"tool result"| agent
