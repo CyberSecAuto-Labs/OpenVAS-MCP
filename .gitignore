@@ -1,0 +1,13 @@
+.venv/
+*.egg-info/
+__pycache__/
+*.pyc
+.env
+
+# Test and coverage artifacts
+.coverage
+coverage.xml
+.pytest_cache/
+
+# Coverage badge — generated and committed by CI, not locally
+docs/coverage-badge.svg

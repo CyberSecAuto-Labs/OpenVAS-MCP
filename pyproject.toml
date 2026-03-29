@@ -1,0 +1,53 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "openvas-mcp"
+version = "0.1.0"
+requires-python = ">=3.10"
+dependencies = [
+    "mcp>=1.0.0",
+    "python-gvm>=26.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-cov>=5.0",
+    "genbadge[coverage]>=1.1",
+    "ruff>=0.9",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["openvas_mcp*"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B"]
+ignore = ["E501"]
+
+[tool.ruff.format]
+quote-style = "double"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-v --tb=short"
+
+[tool.coverage.run]
+source = ["openvas_mcp"]
+omit = [
+    "openvas_mcp/__main__.py",      # entry point — needs integration test
+    "openvas_mcp/logging_config.py", # logging setup — needs integration test
+    "openvas_mcp/gvm_client.py",     # connection factory — needs integration test
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "async def get_scan_status",     # async tool — needs pytest-asyncio
+]
