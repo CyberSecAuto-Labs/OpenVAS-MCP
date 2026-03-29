@@ -20,6 +20,19 @@ _VALID_UUID = "12345678-1234-1234-1234-123456789abc"
 _VALID_UUID2 = "abcdef12-abcd-abcd-abcd-abcdef123456"
 
 
+# ---------------------------------------------------------------------------
+# Helper unit tests
+# ---------------------------------------------------------------------------
+
+
+class TestElemText:
+    def test_none_element_returns_default(self):
+        from openvas_mcp.server import _elem_text
+
+        assert _elem_text(None, "name") == ""
+        assert _elem_text(None, "name", "fallback") == "fallback"
+
+
 def _target_xml(
     tid: str = _VALID_UUID, name: str = "test-target", hosts: str = "10.0.0.1"
 ) -> ET.Element:
@@ -158,6 +171,18 @@ class TestCreateTarget:
         assert result["error"] is True
         assert result["code"] == "gvm_error"
 
+    def test_connection_error(self, gmp_session_mock):
+        gmp_session_mock.create_target.side_effect = OSError("refused")
+        result = create_target(name="t", hosts="10.0.0.1")
+        assert result["error"] is True
+        assert result["code"] == "connection_error"
+
+    def test_name_too_long_validation_error(self, gmp_session_mock):
+        result = create_target(name="a" * 256, hosts="10.0.0.1")
+        assert result["error"] is True
+        assert result["code"] == "validation_error"
+        gmp_session_mock.create_target.assert_not_called()
+
 
 # ---------------------------------------------------------------------------
 # list_tasks
@@ -195,6 +220,12 @@ class TestListTasks:
         result = list_tasks()
         assert result["error"] is True
         assert result["code"] == "gvm_error"
+
+    def test_connection_error(self, gmp_session_mock):
+        gmp_session_mock.get_tasks.side_effect = OSError("refused")
+        result = list_tasks()
+        assert result["error"] is True
+        assert result["code"] == "connection_error"
 
 
 # ---------------------------------------------------------------------------
@@ -308,8 +339,8 @@ class TestFetchScanResults:
         assert result["error"] is True
         assert result["code"] == "not_found"
 
-    def test_severity_filter(self, gmp_session_mock):
-        gmp_session_mock.get_task.return_value = ET.fromstring(f"""
+    def _task_with_report(self):
+        return ET.fromstring(f"""
         <get_task_response>
             <task id="{_VALID_UUID}">
                 <name>t</name><status>Done</status><progress>100</progress>
@@ -317,11 +348,41 @@ class TestFetchScanResults:
             </task>
         </get_task_response>
         """)
+
+    def test_results_returned_above_min_severity(self, gmp_session_mock):
+        gmp_session_mock.get_task.return_value = self._task_with_report()
+        gmp_session_mock.get_report.return_value = self._make_report_resp(severity=9.0)
+        result = fetch_scan_results(task_id=_VALID_UUID, min_severity=7.0)
+        assert isinstance(result, list)
+        assert len(result) == 1
+        assert result[0]["severity"] == 9.0
+
+    def test_severity_filter(self, gmp_session_mock):
+        gmp_session_mock.get_task.return_value = self._task_with_report()
         gmp_session_mock.get_report.return_value = self._make_report_resp(severity=5.0)
         result = fetch_scan_results(task_id=_VALID_UUID, min_severity=7.0)
-        # The result with severity 5.0 should be filtered out client-side
         assert isinstance(result, list)
-        assert all(r["severity"] >= 7.0 for r in result)
+        assert result == []
+
+    def test_invalid_severity_text_defaults_to_zero(self, gmp_session_mock):
+        gmp_session_mock.get_task.return_value = self._task_with_report()
+        gmp_session_mock.get_report.return_value = ET.fromstring(f"""
+        <get_reports_response>
+            <report id="{_VALID_UUID2}">
+                <results>
+                    <result id="{_VALID_UUID}">
+                        <name>Bad Severity</name>
+                        <host>10.0.0.1</host><port>80/tcp</port>
+                        <severity>not-a-number</severity>
+                        <threat>Low</threat><description/>
+                    </result>
+                </results>
+            </report>
+        </get_reports_response>
+        """)
+        result = fetch_scan_results(task_id=_VALID_UUID, min_severity=0.0)
+        assert isinstance(result, list)
+        assert result[0]["severity"] == 0.0
 
     def test_min_severity_out_of_range(self, gmp_session_mock):
         result = fetch_scan_results(task_id=_VALID_UUID, min_severity=11.0)
