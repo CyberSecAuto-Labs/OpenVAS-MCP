@@ -13,6 +13,9 @@ def test_defaults(monkeypatch):
     monkeypatch.delenv("GVM_USERNAME", raising=False)
     monkeypatch.delenv("GVM_PASSWORD", raising=False)
     monkeypatch.delenv("LOG_LEVEL", raising=False)
+    monkeypatch.delenv("MCP_TRANSPORT", raising=False)
+    monkeypatch.delenv("MCP_HOST", raising=False)
+    monkeypatch.delenv("MCP_PORT", raising=False)
 
     from openvas_mcp.config import Config
 
@@ -24,6 +27,9 @@ def test_defaults(monkeypatch):
     assert cfg.username == "admin"
     assert cfg.password == ""
     assert cfg.log_level == "INFO"
+    assert cfg.mcp_transport == "stdio"
+    assert cfg.mcp_host == "127.0.0.1"
+    assert cfg.mcp_port == 8000
 
 
 def test_gvm_port_invalid(monkeypatch):
@@ -88,3 +94,44 @@ def test_no_missing_when_host_and_password_set(monkeypatch):
 
     cfg = Config.from_env()
     assert cfg.missing_required() == []
+
+
+@pytest.mark.parametrize("value", ["stdio", "sse", "streamable-http"])
+def test_mcp_transport_valid(monkeypatch, value):
+    monkeypatch.setenv("MCP_TRANSPORT", value)
+    from openvas_mcp.config import Config
+
+    cfg = Config.from_env()
+    assert cfg.mcp_transport == value
+
+
+def test_mcp_transport_invalid(monkeypatch):
+    monkeypatch.setenv("MCP_TRANSPORT", "http")
+    from openvas_mcp.config import Config
+
+    with pytest.raises(ValueError, match="MCP_TRANSPORT must be one of"):
+        Config.from_env()
+
+
+def test_mcp_host_custom(monkeypatch):
+    monkeypatch.setenv("MCP_HOST", "0.0.0.0")
+    from openvas_mcp.config import Config
+
+    cfg = Config.from_env()
+    assert cfg.mcp_host == "0.0.0.0"
+
+
+def test_mcp_port_custom(monkeypatch):
+    monkeypatch.setenv("MCP_PORT", "9000")
+    from openvas_mcp.config import Config
+
+    cfg = Config.from_env()
+    assert cfg.mcp_port == 9000
+
+
+def test_mcp_port_invalid(monkeypatch):
+    monkeypatch.setenv("MCP_PORT", "not-a-number")
+    from openvas_mcp.config import Config
+
+    with pytest.raises(ValueError, match="MCP_PORT must be an integer"):
+        Config.from_env()

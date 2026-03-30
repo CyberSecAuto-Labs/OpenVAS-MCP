@@ -21,7 +21,7 @@ def main():
         sys.exit(1)
 
     apply_json_formatter(cfg.log_level)
-    mcp.run()
+    mcp.run(transport=cfg.mcp_transport)
 
 
 if __name__ == "__main__":
