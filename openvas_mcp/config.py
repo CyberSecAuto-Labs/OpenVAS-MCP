@@ -6,6 +6,7 @@ import os
 from dataclasses import dataclass
 
 _VALID_LOG_LEVELS = {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}
+_VALID_TRANSPORTS = {"stdio", "sse", "streamable-http"}
 
 
 @dataclass
@@ -17,6 +18,9 @@ class Config:
     username: str
     password: str
     log_level: str
+    mcp_transport: str
+    mcp_host: str
+    mcp_port: int
 
     @classmethod
     def from_env(cls) -> Config:
@@ -32,6 +36,18 @@ class Config:
                 f"LOG_LEVEL must be one of {sorted(_VALID_LOG_LEVELS)}, got: {log_level!r}"
             )
 
+        mcp_transport = os.environ.get("MCP_TRANSPORT", "stdio").lower()
+        if mcp_transport not in _VALID_TRANSPORTS:
+            raise ValueError(
+                f"MCP_TRANSPORT must be one of {sorted(_VALID_TRANSPORTS)}, got: {mcp_transport!r}"
+            )
+
+        raw_mcp_port = os.environ.get("MCP_PORT", "8000")
+        try:
+            mcp_port = int(raw_mcp_port)
+        except ValueError:
+            raise ValueError(f"MCP_PORT must be an integer, got: {raw_mcp_port!r}") from None
+
         return cls(
             socket_path=os.environ.get("GVM_SOCKET_PATH", "/run/gvmd/gvmd.sock"),
             host=os.environ.get("GVM_HOST", ""),
@@ -40,6 +56,9 @@ class Config:
             username=os.environ.get("GVM_USERNAME", "admin"),
             password=os.environ.get("GVM_PASSWORD", ""),
             log_level=log_level,
+            mcp_transport=mcp_transport,
+            mcp_host=os.environ.get("MCP_HOST", "127.0.0.1"),
+            mcp_port=mcp_port,
         )
 
     def missing_required(self) -> list[str]:
