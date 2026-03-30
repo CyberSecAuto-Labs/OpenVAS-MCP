@@ -2,7 +2,7 @@
 
 ![Coverage](docs/coverage-badge.svg)
 
-A self-hosted MCP server that gives AI agents structured access to [OpenVAS / Greenbone](https://www.greenbone.net/) vulnerability scanning — without sending your data anywhere.
+A self-hosted MCP server that gives AI agents structured access to [OpenVAS / Greenbone](https://github.com/greenbone/openvas-scanner) vulnerability scanning — without sending your data anywhere.
 
 ## Why this exists
 
