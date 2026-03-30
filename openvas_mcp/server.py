@@ -25,6 +25,7 @@ mcp = FastMCP("openvas", host=cfg.mcp_host, port=cfg.mcp_port)
 async def health_check(request: Request) -> Response:  # pragma: no cover
     return JSONResponse({"status": "ok"})
 
+
 _UUID_RE = re.compile(
     r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
     re.IGNORECASE,
