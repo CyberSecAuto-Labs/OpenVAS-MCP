@@ -30,7 +30,7 @@ cd OpenVAS-MCP
 python3.11 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-GVM_PASSWORD=secret MCP_POLICY_FILE=examples/policy.yaml python -m openvas_mcp
+GVM_PASSWORD=secret python -m openvas_mcp
 ```
 
 ## Configuration
@@ -48,7 +48,7 @@ GVM_PASSWORD=secret MCP_POLICY_FILE=examples/policy.yaml python -m openvas_mcp
 | `MCP_HOST` | `127.0.0.1` | Bind address for HTTP transports |
 | `MCP_PORT` | `8000` | Bind port for HTTP transports |
 | `MCP_API_KEYS` | — | Bearer API keys for HTTP transport auth (`token:name,...`) |
-| `MCP_POLICY_FILE` | — | Path to YAML authorization policy file |
+| `MCP_POLICY_FILE` | `examples/policy.yaml` | Path to YAML authorization policy file |
 
 The stdio transport is zero-config. HTTP/SSE transport supports Bearer token authentication and a YAML-driven policy engine (per-client tool allow/deny, CIDR target restrictions, concurrent scan limits). See [docs/architecture.md](docs/architecture.md) for details and [`examples/policy.yaml`](examples/policy.yaml) for a starter policy.
 

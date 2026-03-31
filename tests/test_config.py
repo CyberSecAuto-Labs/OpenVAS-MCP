@@ -156,12 +156,12 @@ def test_mcp_api_keys_custom(monkeypatch):
     assert cfg.mcp_api_keys == "tok1:alice,tok2:bob"
 
 
-def test_mcp_policy_file_default_empty(monkeypatch):
+def test_mcp_policy_file_default(monkeypatch):
     monkeypatch.delenv("MCP_POLICY_FILE", raising=False)
     from openvas_mcp.config import Config
 
     cfg = Config.from_env()
-    assert cfg.mcp_policy_file == ""
+    assert cfg.mcp_policy_file == "examples/policy.yaml"
 
 
 def test_mcp_policy_file_custom(monkeypatch, tmp_path):

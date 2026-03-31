@@ -63,7 +63,7 @@ class Config:
             mcp_host=os.environ.get("MCP_HOST", "127.0.0.1"),
             mcp_port=mcp_port,
             mcp_api_keys=os.environ.get("MCP_API_KEYS", ""),
-            mcp_policy_file=os.environ.get("MCP_POLICY_FILE", ""),
+            mcp_policy_file=os.environ.get("MCP_POLICY_FILE", "examples/policy.yaml"),
             mcp_allow_unauthenticated=os.environ.get("MCP_ALLOW_UNAUTHENTICATED", "").lower()
             in ("1", "true", "yes"),
         )
