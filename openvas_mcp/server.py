@@ -13,8 +13,10 @@ from mcp.server.fastmcp import Context, FastMCP
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
+from .auth import get_current_client
 from .config import cfg
 from .gvm_client import gmp_session
+from .policy import get_policy
 
 logger = logging.getLogger(__name__)
 
@@ -92,7 +94,20 @@ def _validate_name(value: str, field_name: str = "name") -> dict[str, Any] | Non
 @mcp.tool()
 def list_targets() -> list[dict[str, Any]] | dict[str, Any]:
     """Return all scan targets defined in OpenVAS."""
-    logger.info("tool invoked", extra={"tool": "list_targets"})
+    identity = get_current_client()
+    if not get_policy().is_tool_allowed("list_targets", identity):
+        logger.warning(
+            "operation denied",
+            extra={
+                "tool": "list_targets",
+                "client_id": identity.client_id if identity else "stdio",
+            },
+        )
+        return _err("forbidden", "Operation not permitted")
+    logger.info(
+        "tool invoked",
+        extra={"tool": "list_targets", "client_id": identity.client_id if identity else "stdio"},
+    )
     try:
         with gmp_session() as gmp:
             response = gmp.get_targets()
@@ -110,7 +125,13 @@ def list_targets() -> list[dict[str, Any]] | dict[str, Any]:
         return _err("connection_error", f"Could not connect to GVM: {e}")
     result = [_target_to_dict(t) for t in response.findall("target")]
     logger.info(
-        "tool completed", extra={"tool": "list_targets", "status": "ok", "count": len(result)}
+        "tool completed",
+        extra={
+            "tool": "list_targets",
+            "status": "ok",
+            "count": len(result),
+            "client_id": identity.client_id if identity else "stdio",
+        },
     )
     return result
 
@@ -124,8 +145,23 @@ def create_target(name: str, hosts: str, port_list_id: str = "") -> dict[str, An
         hosts: Comma-separated hostnames/IPs or CIDR ranges (e.g. "192.168.1.0/24").
         port_list_id: UUID of the port list to use. Defaults to "All TCP and Nmap top 100 UDP".
     """
+    identity = get_current_client()
+    if not get_policy().is_tool_allowed("create_target", identity):
+        logger.warning(
+            "operation denied",
+            extra={
+                "tool": "create_target",
+                "client_id": identity.client_id if identity else "stdio",
+            },
+        )
+        return _err("forbidden", "Operation not permitted")
     logger.info(
-        "tool invoked", extra={"tool": "create_target", "params": {"name": name, "hosts": hosts}}
+        "tool invoked",
+        extra={
+            "tool": "create_target",
+            "params": {"name": name, "hosts": hosts},
+            "client_id": identity.client_id if identity else "stdio",
+        },
     )
     if err := _validate_name(name):
         return err
@@ -134,10 +170,24 @@ def create_target(name: str, hosts: str, port_list_id: str = "") -> dict[str, An
     if port_list_id and (err := _validate_uuid(port_list_id, "port_list_id")):
         return err
 
+    host_list = [h.strip() for h in hosts.split(",") if h.strip()]
+    policy = get_policy()
+    denied_hosts = [h for h in host_list if not policy.is_host_allowed(h, identity)]
+    if denied_hosts:
+        logger.warning(
+            "host denied by policy",
+            extra={
+                "tool": "create_target",
+                "denied": denied_hosts,
+                "client_id": identity.client_id if identity else "stdio",
+            },
+        )
+        return _err("forbidden", f"Target hosts not permitted by policy: {', '.join(denied_hosts)}")
+
     ALL_TCP_NMAP_TOP100_UDP = "730ef368-57e2-11e1-a90f-406186ea4fc5"
     kwargs: dict[str, Any] = {
         "name": name,
-        "hosts": [h.strip() for h in hosts.split(",") if h.strip()],
+        "hosts": host_list,
         "port_list_id": port_list_id or ALL_TCP_NMAP_TOP100_UDP,
     }
     try:
@@ -160,14 +210,31 @@ def create_target(name: str, hosts: str, port_list_id: str = "") -> dict[str, An
         "status": response.get("status", ""),
         "status_text": response.get("status_text", ""),
     }
-    logger.info("tool completed", extra={"tool": "create_target", "status": "ok"})
+    logger.info(
+        "tool completed",
+        extra={
+            "tool": "create_target",
+            "status": "ok",
+            "client_id": identity.client_id if identity else "stdio",
+        },
+    )
     return result
 
 
 @mcp.tool()
 def list_tasks() -> list[dict[str, Any]] | dict[str, Any]:
     """Return all scan tasks (active and historical)."""
-    logger.info("tool invoked", extra={"tool": "list_tasks"})
+    identity = get_current_client()
+    if not get_policy().is_tool_allowed("list_tasks", identity):
+        logger.warning(
+            "operation denied",
+            extra={"tool": "list_tasks", "client_id": identity.client_id if identity else "stdio"},
+        )
+        return _err("forbidden", "Operation not permitted")
+    logger.info(
+        "tool invoked",
+        extra={"tool": "list_tasks", "client_id": identity.client_id if identity else "stdio"},
+    )
     try:
         with gmp_session() as gmp:
             response = gmp.get_tasks()
@@ -185,7 +252,13 @@ def list_tasks() -> list[dict[str, Any]] | dict[str, Any]:
         return _err("connection_error", f"Could not connect to GVM: {e}")
     result = [_task_to_dict(t) for t in response.findall("task")]
     logger.info(
-        "tool completed", extra={"tool": "list_tasks", "status": "ok", "count": len(result)}
+        "tool completed",
+        extra={
+            "tool": "list_tasks",
+            "status": "ok",
+            "count": len(result),
+            "client_id": identity.client_id if identity else "stdio",
+        },
     )
     return result
 
@@ -205,9 +278,20 @@ def start_scan(
         scanner_id: UUID of the scanner to use. Defaults to OpenVAS default scanner.
         scan_config_id: UUID of the scan config. Defaults to "Full and fast".
     """
+    identity = get_current_client()
+    if not get_policy().is_tool_allowed("start_scan", identity):
+        logger.warning(
+            "operation denied",
+            extra={"tool": "start_scan", "client_id": identity.client_id if identity else "stdio"},
+        )
+        return _err("forbidden", "Operation not permitted")
     logger.info(
         "tool invoked",
-        extra={"tool": "start_scan", "params": {"name": name, "target_id": target_id}},
+        extra={
+            "tool": "start_scan",
+            "params": {"name": name, "target_id": target_id},
+            "client_id": identity.client_id if identity else "stdio",
+        },
     )
     if err := _validate_name(name):
         return err
@@ -223,6 +307,21 @@ def start_scan(
 
     try:
         with gmp_session() as gmp:
+            max_scans = get_policy().max_concurrent_scans(identity)
+            if max_scans > 0:
+                running_resp = gmp.get_tasks(filter_string="status=Running")
+                active = len(running_resp.findall("task"))
+                if active >= max_scans:
+                    logger.warning(
+                        "concurrent scan limit reached",
+                        extra={
+                            "tool": "start_scan",
+                            "limit": max_scans,
+                            "client_id": identity.client_id if identity else "stdio",
+                        },
+                    )
+                    return _err("rate_limited", f"Maximum concurrent scans ({max_scans}) reached")
+
             task = gmp.create_task(
                 name=name,
                 config_id=scan_config_id or FULL_AND_FAST,
@@ -245,7 +344,14 @@ def start_scan(
         return _err("connection_error", f"Could not connect to GVM: {e}")
 
     result = {"task_id": task_id, "status": "started"}
-    logger.info("tool completed", extra={"tool": "start_scan", "status": "ok"})
+    logger.info(
+        "tool completed",
+        extra={
+            "tool": "start_scan",
+            "status": "ok",
+            "client_id": identity.client_id if identity else "stdio",
+        },
+    )
     return result
 
 
@@ -256,7 +362,24 @@ async def get_scan_status(task_id: str, ctx: Context) -> dict[str, Any]:
     Args:
         task_id: UUID of the scan task.
     """
-    logger.info("tool invoked", extra={"tool": "get_scan_status", "params": {"task_id": task_id}})
+    identity = get_current_client()
+    if not get_policy().is_tool_allowed("get_scan_status", identity):
+        logger.warning(
+            "operation denied",
+            extra={
+                "tool": "get_scan_status",
+                "client_id": identity.client_id if identity else "stdio",
+            },
+        )
+        return _err("forbidden", "Operation not permitted")
+    logger.info(
+        "tool invoked",
+        extra={
+            "tool": "get_scan_status",
+            "params": {"task_id": task_id},
+            "client_id": identity.client_id if identity else "stdio",
+        },
+    )
     if err := _validate_uuid(task_id, "task_id"):
         return err
 
@@ -293,7 +416,14 @@ async def get_scan_status(task_id: str, ctx: Context) -> dict[str, Any]:
         await ctx.info(f"status={status} progress={progress}%")
 
         if status in TERMINAL_STATES:
-            logger.info("tool completed", extra={"tool": "get_scan_status", "status": status})
+            logger.info(
+                "tool completed",
+                extra={
+                    "tool": "get_scan_status",
+                    "status": status,
+                    "client_id": identity.client_id if identity else "stdio",
+                },
+            )
             return info
 
         await asyncio.sleep(POLL_INTERVAL)
@@ -309,11 +439,22 @@ def fetch_scan_results(
         task_id: UUID of the scan task.
         min_severity: Minimum CVSS severity score to include (0.0–10.0). Default 0.0 returns all.
     """
+    identity = get_current_client()
+    if not get_policy().is_tool_allowed("fetch_scan_results", identity):
+        logger.warning(
+            "operation denied",
+            extra={
+                "tool": "fetch_scan_results",
+                "client_id": identity.client_id if identity else "stdio",
+            },
+        )
+        return _err("forbidden", "Operation not permitted")
     logger.info(
         "tool invoked",
         extra={
             "tool": "fetch_scan_results",
             "params": {"task_id": task_id, "min_severity": min_severity},
+            "client_id": identity.client_id if identity else "stdio",
         },
     )
     if err := _validate_uuid(task_id, "task_id"):
@@ -382,6 +523,11 @@ def fetch_scan_results(
     results.sort(key=lambda r: r["severity"], reverse=True)
     logger.info(
         "tool completed",
-        extra={"tool": "fetch_scan_results", "status": "ok", "count": len(results)},
+        extra={
+            "tool": "fetch_scan_results",
+            "status": "ok",
+            "count": len(results),
+            "client_id": identity.client_id if identity else "stdio",
+        },
     )
     return results

@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import xml.etree.ElementTree as ET
 
+import pytest
+
+from openvas_mcp.policy import ClientPolicy, Policy, get_policy, set_policy
 from openvas_mcp.server import (
     create_target,
     fetch_scan_results,
@@ -428,3 +431,138 @@ class TestFetchScanResults:
     # get_scan_status is excluded from unit tests — it requires
     # asyncio.to_thread, a Context object, and pytest-asyncio scaffolding.
     # TODO: add async tool tests when pytest-asyncio is introduced.
+
+
+# ---------------------------------------------------------------------------
+# Policy enforcement in tools
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def deny_all_policy():
+    """Temporarily set a policy that denies all tools."""
+    original = get_policy()
+    set_policy(Policy(default_policy=ClientPolicy(allowed_tools=[], allowed_cidrs=[])))
+    yield
+    set_policy(original)
+
+
+@pytest.fixture
+def cidr_restricted_policy():
+    """Temporarily set a policy that only allows 10.0.0.0/8."""
+    original = get_policy()
+    set_policy(
+        Policy(default_policy=ClientPolicy(allowed_tools=["*"], allowed_cidrs=["10.0.0.0/8"]))
+    )
+    yield
+    set_policy(original)
+
+
+class TestToolAuthzEnforcement:
+    def test_list_targets_denied(self, gmp_session_mock, deny_all_policy):
+        result = list_targets()
+        assert result["error"] is True
+        assert result["code"] == "forbidden"
+        gmp_session_mock.get_targets.assert_not_called()
+
+    def test_list_tasks_denied(self, gmp_session_mock, deny_all_policy):
+        result = list_tasks()
+        assert result["error"] is True
+        assert result["code"] == "forbidden"
+
+    def test_create_target_denied(self, gmp_session_mock, deny_all_policy):
+        result = create_target(name="t", hosts="10.0.0.1")
+        assert result["error"] is True
+        assert result["code"] == "forbidden"
+        gmp_session_mock.create_target.assert_not_called()
+
+    def test_start_scan_denied(self, gmp_session_mock, deny_all_policy):
+        result = start_scan(name="scan", target_id=_VALID_UUID)
+        assert result["error"] is True
+        assert result["code"] == "forbidden"
+        gmp_session_mock.create_task.assert_not_called()
+
+    def test_fetch_scan_results_denied(self, gmp_session_mock, deny_all_policy):
+        result = fetch_scan_results(task_id=_VALID_UUID)
+        assert result["error"] is True
+        assert result["code"] == "forbidden"
+        gmp_session_mock.get_task.assert_not_called()
+
+
+class TestCreateTargetCIDRPolicy:
+    def test_host_outside_allowed_cidr_denied(self, gmp_session_mock, cidr_restricted_policy):
+        result = create_target(name="t", hosts="192.168.1.1")
+        assert result["error"] is True
+        assert result["code"] == "forbidden"
+        gmp_session_mock.create_target.assert_not_called()
+
+    def test_host_within_allowed_cidr_permitted(self, gmp_session_mock, cidr_restricted_policy):
+        resp = ET.fromstring(
+            f'<create_target_response id="{_VALID_UUID}" status="201" status_text="OK"/>'
+        )
+        gmp_session_mock.create_target.return_value = resp
+        result = create_target(name="t", hosts="10.0.0.1")
+        assert result["id"] == _VALID_UUID
+
+    def test_mixed_hosts_denied_if_any_outside_cidr(self, gmp_session_mock, cidr_restricted_policy):
+        result = create_target(name="t", hosts="10.0.0.1,192.168.1.1")
+        assert result["error"] is True
+        assert result["code"] == "forbidden"
+        gmp_session_mock.create_target.assert_not_called()
+
+
+class TestStartScanConcurrentLimit:
+    def test_rate_limited_when_limit_reached(self, gmp_session_mock):
+        original = get_policy()
+        set_policy(
+            Policy(
+                default_policy=ClientPolicy(
+                    allowed_tools=["*"],
+                    allowed_cidrs=["*"],
+                    max_concurrent_scans=1,
+                )
+            )
+        )
+        try:
+            gmp_session_mock.get_tasks.return_value = ET.fromstring(f"""
+            <get_tasks_response>
+                <task id="{_VALID_UUID}">
+                    <name>running</name><status>Running</status><progress>50</progress>
+                </task>
+            </get_tasks_response>
+            """)
+            result = start_scan(name="scan", target_id=_VALID_UUID)
+            assert result["error"] is True
+            assert result["code"] == "rate_limited"
+            gmp_session_mock.create_task.assert_not_called()
+        finally:
+            set_policy(original)
+
+    def test_allowed_when_below_limit(self, gmp_session_mock):
+        original = get_policy()
+        set_policy(
+            Policy(
+                default_policy=ClientPolicy(
+                    allowed_tools=["*"],
+                    allowed_cidrs=["*"],
+                    max_concurrent_scans=2,
+                )
+            )
+        )
+        try:
+            gmp_session_mock.get_tasks.return_value = ET.fromstring(f"""
+            <get_tasks_response>
+                <task id="{_VALID_UUID}">
+                    <name>running</name><status>Running</status><progress>50</progress>
+                </task>
+            </get_tasks_response>
+            """)
+            gmp_session_mock.create_task.return_value = ET.fromstring(
+                f'<create_task_response id="{_VALID_UUID}"/>'
+            )
+            gmp_session_mock.start_task.return_value = ET.fromstring("<start_task_response/>")
+            result = start_scan(name="scan", target_id=_VALID_UUID)
+            assert result["task_id"] == _VALID_UUID
+            assert result["status"] == "started"
+        finally:
+            set_policy(original)

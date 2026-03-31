@@ -1,0 +1,7 @@
+clients:
+  alice:
+    allowed_tools: [list_tasks, fetch_scan_results]
+    allowed_cidrs: ["10.0.0.0/8"]
+  admin:
+    allowed_tools: ["*"]
+    allowed_cidrs: ["*"]
