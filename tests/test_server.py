@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import xml.etree.ElementTree as ET
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -10,6 +12,7 @@ from openvas_mcp.policy import ClientPolicy, Policy, get_policy, set_policy
 from openvas_mcp.server import (
     create_target,
     fetch_scan_results,
+    get_scan_status,
     list_targets,
     list_tasks,
     start_scan,
@@ -428,9 +431,78 @@ class TestFetchScanResults:
         assert result["error"] is True
         assert result["code"] == "connection_error"
 
-    # get_scan_status is excluded from unit tests — it requires
-    # asyncio.to_thread, a Context object, and pytest-asyncio scaffolding.
-    # TODO: add async tool tests when pytest-asyncio is introduced.
+
+# ---------------------------------------------------------------------------
+# get_scan_status
+# ---------------------------------------------------------------------------
+
+
+def _make_ctx() -> MagicMock:
+    ctx = MagicMock()
+    ctx.report_progress = AsyncMock()
+    ctx.info = AsyncMock()
+    return ctx
+
+
+class TestGetScanStatus:
+    async def test_invalid_uuid_returns_error(self, gmp_session_mock):
+        result = await get_scan_status("not-a-uuid", _make_ctx())
+        assert result["error"] is True
+        assert result["code"] == "validation_error"
+        gmp_session_mock.get_task.assert_not_called()
+
+    async def test_task_not_found(self, gmp_session_mock):
+        gmp_session_mock.get_task.return_value = ET.fromstring("<get_tasks_response/>")
+        result = await get_scan_status(_VALID_UUID, _make_ctx())
+        assert result["error"] is True
+        assert result["code"] == "not_found"
+
+    async def test_done_returns_immediately(self, gmp_session_mock):
+        ctx = _make_ctx()
+        gmp_session_mock.get_task.return_value = ET.fromstring(f"""
+        <get_tasks_response>
+            <task id="{_VALID_UUID}">
+                <name>test</name>
+                <status>Done</status>
+                <progress>100</progress>
+            </task>
+        </get_tasks_response>
+        """)
+        result = await get_scan_status(_VALID_UUID, ctx)
+        assert result["status"] == "Done"
+        ctx.report_progress.assert_called_once_with(100, 100)
+
+    async def test_polls_until_terminal(self, gmp_session_mock):
+        ctx = _make_ctx()
+        running = ET.fromstring(f"""
+        <get_tasks_response>
+            <task id="{_VALID_UUID}">
+                <name>test</name><status>Running</status><progress>50</progress>
+            </task>
+        </get_tasks_response>
+        """)
+        done = ET.fromstring(f"""
+        <get_tasks_response>
+            <task id="{_VALID_UUID}">
+                <name>test</name><status>Done</status><progress>100</progress>
+            </task>
+        </get_tasks_response>
+        """)
+        gmp_session_mock.get_task.side_effect = [running, done]
+
+        with patch("asyncio.sleep", new_callable=AsyncMock):
+            result = await get_scan_status(_VALID_UUID, ctx)
+
+        assert result["status"] == "Done"
+        assert gmp_session_mock.get_task.call_count == 2
+
+    async def test_gvm_error_returns_error(self, gmp_session_mock):
+        from gvm.errors import GvmError
+
+        gmp_session_mock.get_task.side_effect = GvmError("fail")
+        result = await get_scan_status(_VALID_UUID, _make_ctx())
+        assert result["error"] is True
+        assert result["code"] == "gvm_error"
 
 
 # ---------------------------------------------------------------------------
