@@ -22,7 +22,9 @@ Supports stdio (local, zero-config) and HTTP/SSE transports. See [docs/architect
 
 ## Quick start
 
-**Requirements:** Python 3.10+, a running OpenVAS / Greenbone instance.
+**Requirements:** Python 3.10+ or Docker, a running OpenVAS / Greenbone instance.
+
+### Local / Claude Desktop (stdio)
 
 ```bash
 git clone https://github.com/CyberSecAuto-Labs/OpenVAS-MCP
@@ -32,6 +34,48 @@ source .venv/bin/activate
 pip install -r requirements.txt
 GVM_PASSWORD=secret python -m openvas_mcp
 ```
+
+For any MCP client that supports stdio (Claude Desktop, Cursor, Windsurf, Cline, Continue, Zed, …), add to `mcpServers` in your config:
+
+```json
+{
+  "mcpServers": {
+    "openvas": {
+      "command": "/path/to/.venv/bin/python",
+      "args": ["-m", "openvas_mcp"],
+      "env": { "GVM_PASSWORD": "secret" }
+    }
+  }
+}
+```
+
+### Networked deployment (SSE)
+
+**Connect to an existing OpenVAS instance** (socket or TCP):
+
+```bash
+# Socket (OpenVAS running locally)
+GVM_PASSWORD=secret docker compose up
+
+# TCP
+GVM_HOST=192.168.1.10 GVM_PASSWORD=secret docker compose up
+```
+
+The server listens on `127.0.0.1:8000` using SSE transport.
+
+**All-in-one dev setup** (Greenbone Community Edition + MCP server):
+
+```bash
+# Start the Greenbone stack
+docker compose -f docker/openvas/compose.yaml up -d
+
+# Start the MCP server, connected via gvmd socket
+GVM_PASSWORD=secret docker compose -f compose.yaml -f compose.override.yaml up
+```
+
+See [`compose.override.yaml`](compose.override.yaml) for how the socket volume is mounted.
+
+> **Note:** Plain TCP connections (`GVM_HOST` set, `GVM_TLS` unset) send GVM credentials unencrypted. Use `GVM_TLS=1` or a Unix socket for anything beyond local dev.
 
 ## Configuration
 
@@ -51,20 +95,6 @@ GVM_PASSWORD=secret python -m openvas_mcp
 | `MCP_POLICY_FILE` | `examples/policy.yaml` | Path to YAML authorization policy file |
 
 The stdio transport is zero-config. HTTP/SSE transport supports Bearer token authentication and a YAML-driven policy engine (per-client tool allow/deny, CIDR target restrictions, concurrent scan limits). See [docs/architecture.md](docs/architecture.md) for details and [`examples/policy.yaml`](examples/policy.yaml) for a starter policy.
-
-## Claude Desktop integration
-
-```json
-{
-  "mcpServers": {
-    "openvas": {
-      "command": "/path/to/.venv/bin/python",
-      "args": ["-m", "openvas_mcp"],
-      "env": { "GVM_PASSWORD": "secret" }
-    }
-  }
-}
-```
 
 ## Available tools
 
