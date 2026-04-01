@@ -1,5 +1,9 @@
 # OpenVAS-MCP
 
+[![Lint & Test](https://github.com/CyberSecAuto-Labs/OpenVAS-MCP/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/CyberSecAuto-Labs/OpenVAS-MCP/actions/workflows/ci.yml)
+[![Docker](https://github.com/CyberSecAuto-Labs/OpenVAS-MCP/actions/workflows/docker.yml/badge.svg?branch=main)](https://github.com/CyberSecAuto-Labs/OpenVAS-MCP/actions/workflows/docker.yml)
+[![Integration tests](https://github.com/CyberSecAuto-Labs/OpenVAS-MCP/actions/workflows/integration.yml/badge.svg?branch=main)](https://github.com/CyberSecAuto-Labs/OpenVAS-MCP/actions/workflows/integration.yml)
+[![Telemetry audit](https://github.com/CyberSecAuto-Labs/OpenVAS-MCP/actions/workflows/telemetry-audit.yml/badge.svg?branch=main)](https://github.com/CyberSecAuto-Labs/OpenVAS-MCP/actions/workflows/telemetry-audit.yml)
 ![Coverage](docs/coverage-badge.svg)
 
 A self-hosted MCP server that gives AI agents structured access to [OpenVAS / Greenbone](https://github.com/greenbone/openvas-scanner) vulnerability scanning — without sending your data anywhere.
@@ -8,7 +12,7 @@ A self-hosted MCP server that gives AI agents structured access to [OpenVAS / Gr
 
 OpenVAS has no native interface for AI agents. Most integrations require cloud connectivity or expose GVM credentials to every client. OpenVAS-MCP solves this:
 
-- **Local-first.** Talks only to your GVM instance. No telemetry, no external calls.
+- **Local-first.** Talks only to your GVM instance. No telemetry, no external calls — [verified by CI](.github/workflows/telemetry-audit.yml).
 - **Credential isolation.** AI agents authenticate to the MCP server; the server holds the single GVM service account.
 - **Thin bridge.** Returns structured scan data as-is. Analysis and reporting logic belong in the agent or a platform built on top.
 
@@ -51,7 +55,9 @@ For any MCP client that supports stdio (Claude Desktop, Cursor, Windsurf, Cline,
 
 ### Networked deployment (SSE)
 
-**Connect to an existing OpenVAS instance** (socket or TCP):
+**Using a published release** (recommended for production):
+
+Download the compose files from the [latest release](https://github.com/CyberSecAuto-Labs/OpenVAS-MCP/releases/latest) and run:
 
 ```bash
 # Socket (OpenVAS running locally)
@@ -59,6 +65,23 @@ GVM_PASSWORD=secret docker compose up
 
 # TCP
 GVM_HOST=192.168.1.10 GVM_PASSWORD=secret docker compose up
+```
+
+This pulls `ghcr.io/cybersecauto-labs/openvas-mcp:<version>` — a pinned, signed image. To verify the signature before running:
+
+```bash
+cosign verify \
+  --certificate-identity-regexp "https://github.com/CyberSecAuto-Labs/OpenVAS-MCP/.github/workflows/release.yml@refs/tags/.*" \
+  --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+  ghcr.io/cybersecauto-labs/openvas-mcp:<version>
+```
+
+**Building from source** (for development or unreleased changes):
+
+```bash
+git clone https://github.com/CyberSecAuto-Labs/OpenVAS-MCP
+cd OpenVAS-MCP
+GVM_PASSWORD=secret docker compose up --build
 ```
 
 The server listens on `127.0.0.1:8000` using SSE transport.
@@ -108,6 +131,14 @@ The stdio transport is zero-config. HTTP/SSE transport supports Bearer token aut
 | `fetch_scan_results` | Retrieve findings, optionally filtered by minimum severity |
 
 **Example:** `"Scan 192.168.1.0/24 and show me anything above severity 7"` — the agent calls `create_target` → `start_scan` → `get_scan_status` → `fetch_scan_results(min_severity=7.0)`.
+
+## Release integrity
+
+Every release image is:
+
+- **Signed** with [cosign](https://github.com/sigstore/cosign) keyless OIDC signing — no long-lived key to compromise. Verify with `cosign verify` as shown in the quickstart.
+- **SBOM attached** — a CycloneDX JSON bill of materials is attached to each GitHub Release for vulnerability scanning and compliance audits.
+- **Telemetry-audited** — the [`telemetry-audit` workflow](.github/workflows/telemetry-audit.yml) runs the server in a network-isolated container (`--network=none`) on every push and PR, asserting no unexpected outbound connections.
 
 ## Notes
 
