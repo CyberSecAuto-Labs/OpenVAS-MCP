@@ -1,0 +1,13 @@
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+openvas_mcp.egg-info/
+.git/
+.github/
+tests/
+docs/
+docker/
+compose*.yaml
+coverage.xml

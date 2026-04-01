@@ -1,0 +1,21 @@
+# All-in-one override: mounts the gvmd Unix socket from a local Greenbone stack
+# into the MCP server container, enabling socket-based GVM connections.
+#
+# Prerequisites: start the Greenbone stack first:
+#   docker compose -f docker/openvas/compose.yaml up -d
+#
+# Then start the MCP server with socket access:
+#   docker compose -f compose.yaml -f compose.override.yaml up
+
+services:
+  openvas-mcp:
+    environment:
+      GVM_HOST: ""
+      GVM_SOCKET_PATH: /run/gvmd/gvmd.sock
+    volumes:
+      - gvmd_socket:/run/gvmd:ro
+
+volumes:
+  gvmd_socket:
+    external: true
+    name: greenbone-community-edition_gvmd_socket_vol
