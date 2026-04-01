@@ -47,3 +47,4 @@ CIDR enforcement happens at `create_target` time, where hosts are explicitly def
 - **Single GVM instance.** The server connects to one GVM instance, configured at startup. Multi-instance routing is not supported.
 - **`get_scan_status` polls on a fixed interval.** The tool polls every 10 seconds. There is no push notification or webhook mechanism from GVM.
 - **No API key expiry.** API keys are static strings with no built-in rotation or TTL. Revoke a key by removing it from `MCP_API_KEYS` and restarting the server.
+- **Telemetry audit is not syscall-level.** The `telemetry-audit` CI job verifies the "no external calls" claim by running the server with `--network=none` and scanning log output for known service names. It does not trace `connect()` syscalls or capture raw network traffic. A process could attempt an outbound connection that fails silently without appearing in logs. A strace- or tcpdump-based audit at the syscall level is planned for a future version.
