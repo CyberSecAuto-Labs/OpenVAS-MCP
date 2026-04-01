@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import xml.etree.ElementTree as ET
 from unittest.mock import AsyncMock, MagicMock, patch
 

@@ -20,7 +20,6 @@ from openvas_mcp.server import (
     list_tasks,
 )
 
-
 _PREFIX = "mcp-integration-"
 _log = logging.getLogger(__name__)
 

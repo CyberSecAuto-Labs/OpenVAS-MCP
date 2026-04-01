@@ -8,6 +8,7 @@ Run with:
 from __future__ import annotations
 
 import os
+
 import pytest
 
 from openvas_mcp.gvm_client import gmp_session
