@@ -1,0 +1,73 @@
+name: Integration tests
+
+# Run on PRs and pushes targeting main only — not on every dev branch push,
+# to avoid burning minutes on iteration. The full Greenbone stack is heavy.
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  integration:
+    name: Integration tests (live GVM)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install package and dev dependencies
+        run: pip install -e ".[dev]"
+
+      - name: Start Greenbone Community Edition stack
+        run: docker compose -f docker/openvas/compose.yaml up -d
+
+      - name: Wait for gvmd socket proxy
+        # The socat proxy only accepts connections once gvmd's Unix socket exists.
+        run: |
+          echo "Waiting for gvmd TCP proxy (up to 10 min)..."
+          timeout 600 bash -c '
+            until python -c "
+          import sys, socket
+          try:
+              s = socket.create_connection((\"127.0.0.1\", 9393), timeout=5)
+              s.close(); sys.exit(0)
+          except Exception:
+              sys.exit(1)
+          " 2>/dev/null; do printf "."; sleep 10; done'
+          echo ""
+          echo "gvmd socket proxy ready."
+
+      - name: Set admin password
+        # gvmd creates admin with a random password on first run; set a known one.
+        run: |
+          docker compose -f docker/openvas/compose.yaml exec -T -u gvmd gvmd \
+            gvmd --user=admin --new-password=cipassword123
+
+      - name: Verify GMP authentication
+        run: |
+          timeout 60 bash -c '
+            until GVM_HOST=127.0.0.1 GVM_PORT=9393 GVM_PASSWORD=cipassword123 python -c "
+          from openvas_mcp.gvm_client import gmp_session
+          with gmp_session(): pass
+          " 2>/dev/null; do printf "."; sleep 5; done'
+          echo "GMP authentication OK."
+
+      - name: Run integration tests
+        env:
+          GVM_INTEGRATION: "1"
+          GVM_HOST: "127.0.0.1"
+          GVM_PORT: "9393"
+          GVM_PASSWORD: "cipassword123"
+        run: pytest tests/integration/ -v
+
+      - name: Stop stack
+        if: always()
+        run: docker compose -f docker/openvas/compose.yaml down -v
