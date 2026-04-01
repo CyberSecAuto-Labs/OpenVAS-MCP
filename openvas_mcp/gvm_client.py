@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import socket
 from collections.abc import Generator
 from contextlib import contextmanager
@@ -12,6 +13,8 @@ from gvm.protocols.gmp import Gmp
 from gvm.transforms import EtreeCheckCommandTransform
 
 from .config import cfg
+
+logger = logging.getLogger(__name__)
 
 
 class SocketConnection(AbstractGvmConnection):
@@ -43,6 +46,10 @@ def _make_connection():
     if cfg.host:
         if cfg.tls:
             return TLSConnection(hostname=cfg.host, port=cfg.port)
+        logger.warning(
+            "connecting to GVM over plain TCP — credentials will be sent unencrypted; "
+            "set GVM_TLS=1 or use a Unix socket for production deployments"
+        )
         return SocketConnection(hostname=cfg.host, port=cfg.port)
     return UnixSocketConnection(path=cfg.socket_path)
 
