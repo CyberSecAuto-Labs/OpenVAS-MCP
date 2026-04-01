@@ -1,0 +1,26 @@
+# default_policy applies to any client not listed under `clients`.
+# allowed_tools: ["*"] = all tools; list specific tools to restrict
+# allowed_cidrs: ["*"] = any target; list CIDR ranges to restrict
+# max_concurrent_scans: 0 = no limit
+default_policy:
+  allowed_tools: []
+  allowed_cidrs: []
+
+# Per-client overrides — client name matches the label assigned in MCP_API_KEYS.
+# Example: MCP_API_KEYS="tok1:readonly,tok2:scanner,tok3:admin"
+clients:
+  # Read-only agent: can query results but cannot launch scans
+  readonly:
+    allowed_tools: [list_targets, list_tasks, get_scan_status, fetch_scan_results]
+    allowed_cidrs: ["*"]
+
+  # Scoped agent: full workflow, restricted to RFC 1918 ranges
+  scanner:
+    allowed_tools: ["*"]
+    allowed_cidrs: ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"]
+    max_concurrent_scans: 2
+
+  # Admin: unrestricted
+  admin:
+    allowed_tools: ["*"]
+    allowed_cidrs: ["*"]

@@ -1,0 +1,3 @@
+default:
+  allowed_tools: [list_tasks]
+  allowed_cidrs: []

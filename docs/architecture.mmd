@@ -5,7 +5,9 @@ flowchart TD
     end
 
     subgraph Server["OpenVAS-MCP server"]
+        auth["auth.py<br/>AuthMiddleware"]
         server["server.py<br/>@mcp.tool definitions"]
+        policy["policy.py<br/>Policy engine"]
         config["config.py<br/>env vars + validation"]
         logging["logging_config.py<br/>JSON → stderr"]
         gvm_client["gvm_client.py<br/>gmp_session()"]
@@ -17,13 +19,12 @@ flowchart TD
     end
 
     agent -->|"natural language"| mcp_client
-    mcp_client -->|"MCP tool call<br/>(stdio or HTTP/SSE)"| server
+    mcp_client -->|"HTTP/SSE"| auth
+    mcp_client -->|"stdio"| server
+    auth --> server
     server --> config
     server --> logging
-    server -->|"validate → call"| gvm_client
-    gvm_client -->|"GMP / XML<br/>(Unix socket or TLS)"| gvmd
+    server --> policy
+    server --> gvm_client
+    gvm_client --> gvmd
     gvmd --> scanner
-    gvmd -->|"XML response"| gvm_client
-    gvm_client -->|"structured dict"| server
-    server -->|"JSON result"| mcp_client
-    mcp_client -->|"tool result"| agent

@@ -21,6 +21,9 @@ class Config:
     mcp_transport: str
     mcp_host: str
     mcp_port: int
+    mcp_api_keys: str
+    mcp_policy_file: str
+    mcp_allow_unauthenticated: bool
 
     @classmethod
     def from_env(cls) -> Config:
@@ -59,6 +62,10 @@ class Config:
             mcp_transport=mcp_transport,
             mcp_host=os.environ.get("MCP_HOST", "127.0.0.1"),
             mcp_port=mcp_port,
+            mcp_api_keys=os.environ.get("MCP_API_KEYS", ""),
+            mcp_policy_file=os.environ.get("MCP_POLICY_FILE", "examples/policy.yaml"),
+            mcp_allow_unauthenticated=os.environ.get("MCP_ALLOW_UNAUTHENTICATED", "").lower()
+            in ("1", "true", "yes"),
         )
 
     def missing_required(self) -> list[str]:

@@ -16,6 +16,9 @@ def test_defaults(monkeypatch):
     monkeypatch.delenv("MCP_TRANSPORT", raising=False)
     monkeypatch.delenv("MCP_HOST", raising=False)
     monkeypatch.delenv("MCP_PORT", raising=False)
+    monkeypatch.delenv("MCP_API_KEYS", raising=False)
+    monkeypatch.delenv("MCP_POLICY_FILE", raising=False)
+    monkeypatch.delenv("MCP_ALLOW_UNAUTHENTICATED", raising=False)
 
     from openvas_mcp.config import Config
 
@@ -135,3 +138,61 @@ def test_mcp_port_invalid(monkeypatch):
 
     with pytest.raises(ValueError, match="MCP_PORT must be an integer"):
         Config.from_env()
+
+
+def test_mcp_api_keys_default_empty(monkeypatch):
+    monkeypatch.delenv("MCP_API_KEYS", raising=False)
+    from openvas_mcp.config import Config
+
+    cfg = Config.from_env()
+    assert cfg.mcp_api_keys == ""
+
+
+def test_mcp_api_keys_custom(monkeypatch):
+    monkeypatch.setenv("MCP_API_KEYS", "tok1:alice,tok2:bob")
+    from openvas_mcp.config import Config
+
+    cfg = Config.from_env()
+    assert cfg.mcp_api_keys == "tok1:alice,tok2:bob"
+
+
+def test_mcp_policy_file_default(monkeypatch):
+    monkeypatch.delenv("MCP_POLICY_FILE", raising=False)
+    from openvas_mcp.config import Config
+
+    cfg = Config.from_env()
+    assert cfg.mcp_policy_file == "examples/policy.yaml"
+
+
+def test_mcp_policy_file_custom(monkeypatch, tmp_path):
+    policy_path = str(tmp_path / "policy.yaml")
+    monkeypatch.setenv("MCP_POLICY_FILE", policy_path)
+    from openvas_mcp.config import Config
+
+    cfg = Config.from_env()
+    assert cfg.mcp_policy_file == policy_path
+
+
+def test_mcp_allow_unauthenticated_default_false(monkeypatch):
+    monkeypatch.delenv("MCP_ALLOW_UNAUTHENTICATED", raising=False)
+    from openvas_mcp.config import Config
+
+    cfg = Config.from_env()
+    assert cfg.mcp_allow_unauthenticated is False
+
+
+@pytest.mark.parametrize("value", ["1", "true", "yes", "True", "YES"])
+def test_mcp_allow_unauthenticated_truthy(monkeypatch, value):
+    monkeypatch.setenv("MCP_ALLOW_UNAUTHENTICATED", value)
+    from openvas_mcp.config import Config
+
+    cfg = Config.from_env()
+    assert cfg.mcp_allow_unauthenticated is True
+
+
+def test_mcp_allow_unauthenticated_falsy(monkeypatch):
+    monkeypatch.setenv("MCP_ALLOW_UNAUTHENTICATED", "false")
+    from openvas_mcp.config import Config
+
+    cfg = Config.from_env()
+    assert cfg.mcp_allow_unauthenticated is False

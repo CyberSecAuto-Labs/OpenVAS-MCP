@@ -1,0 +1,5 @@
+clients:
+  alice:
+    allowed_tools: ["*"]
+    allowed_cidrs: ["*"]
+    max_concurrent_scans: 2
