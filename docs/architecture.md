@@ -60,8 +60,8 @@ On any error (connection failure, GMP error, validation failure, policy violatio
 | Mode | When | Config |
 |---|---|---|
 | Unix socket | Default | `GVM_SOCKET_PATH` (default `/run/gvmd/gvmd.sock`) |
-| Plain TCP | `GVM_HOST` set, `GVM_TLS` not set | `GVM_HOST`, `GVM_PORT` |
-| TLS | `GVM_HOST` + `GVM_TLS=1` | `GVM_HOST`, `GVM_PORT` |
+| Plain TCP | `GVM_HOST` set, `GVM_TLS` not set | `GVM_HOST`, `GVM_PORT` — IPv4 and IPv6 supported |
+| TLS | `GVM_HOST` + `GVM_TLS=1` | `GVM_HOST`, `GVM_PORT`, optional `GVM_TLS_CAFILE` for self-signed certs — IPv4 and IPv6 supported |
 
 ## Authentication and authorization model
 
@@ -69,17 +69,19 @@ On any error (connection failure, GMP error, validation failure, policy violatio
 
 `AuthMiddleware` is a pure ASGI middleware (not `BaseHTTPMiddleware`) wrapping the FastMCP Starlette app for HTTP transports. It validates the Bearer token against the `APIKeyStore` loaded from `MCP_API_KEYS` and stores the `ClientIdentity` in a `contextvars.ContextVar`. This makes the identity available to all tool handlers without threading through function parameters.
 
-If `MCP_API_KEYS` is not set, the middleware is not installed and all HTTP requests are accepted — intended for development only.
+If `MCP_API_KEYS` is not set, the middleware is not installed and all HTTP requests are accepted — intended for development only. Set `MCP_ALLOW_UNAUTHENTICATED=1` to acknowledge this explicitly; omitting it when no keys are configured causes startup to fail.
+
+> **Note:** When `MCP_ALLOW_UNAUTHENTICATED=1` is set alongside a `MCP_POLICY_FILE`, a startup warning is emitted. All requests arrive with no client identity and are evaluated against the `default` policy block; named `clients:` entries are never matched.
 
 ### Policy enforcement
 
 A `Policy` object is loaded from `MCP_POLICY_FILE` at startup and installed as a module-level singleton via `set_policy()`. Tool handlers call `get_policy()` to enforce:
 
 - **Tool-level allow/deny** — each client has an `allowed_tools` list (`["*"]` for all)
-- **CIDR target restriction** — `create_target` validates every host/CIDR in the request against the client's `allowed_cidrs`; hostnames are denied when CIDR rules are configured
-- **Concurrent scan limit** — `start_scan` counts active tasks before creating a new one when `max_concurrent_scans > 0`
+- **CIDR target restriction** — `create_target` validates every host/CIDR in the request against the client's `allowed_cidrs`; non-CIDR entries are treated as fnmatch hostname patterns (e.g. `*.internal`, `db.prod`)
+- **Concurrent scan limit** — `start_scan` counts active tasks before creating a new one when `max_concurrent_scans > 0`; this count is GVM-global, not per-client — scans started outside of MCP (e.g. via the GVM UI) consume the same capacity
 
-Clients not listed in the policy fall back to the `default` block. If no policy file is configured, the default policy permits everything.
+Clients not listed in the policy fall back to the `default` block. If `MCP_POLICY_FILE` is unset, the default policy permits everything. If it is set but the file is missing, startup fails with an error.
 
 ## Release integrity
 
