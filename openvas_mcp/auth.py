@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import collections
 import contextvars
 import hmac
 import logging
 import re
+import time
 from dataclasses import dataclass
 
 from starlette.responses import JSONResponse
@@ -48,6 +50,12 @@ def _parse_api_keys(raw: str) -> dict[str, str]:
         token = token.strip()
         name = name.strip() or token
         if token:
+            if name and ":" in name:
+                logger.warning(
+                    "API key entry contains multiple colons; "
+                    "token is the substring before the first colon — "
+                    "verify that MCP_API_KEYS uses the 'token:name' format"
+                )
             store[token] = name
     return store
 
@@ -76,7 +84,54 @@ class APIKeyStore:
 
 
 _BEARER_RE = re.compile(r"^Bearer\s+(.+)$", re.IGNORECASE)
+# /health is intentionally unauthenticated for load-balancer compatibility;
+# it returns only {"status": "ok"} with no sensitive information.
 _SKIP_PATHS = frozenset({"/health"})
+
+_RATE_LIMIT_ATTEMPTS = 10   # max failed auth attempts per window per IP
+_RATE_LIMIT_WINDOW = 60.0   # seconds
+_RATE_LIMIT_MAX_IPS = 10000  # max distinct IPs tracked; oldest evicted when exceeded
+
+
+class _RateLimiter:
+    """In-memory sliding-window rate limiter for failed authentication attempts."""
+
+    def __init__(
+        self,
+        max_attempts: int = _RATE_LIMIT_ATTEMPTS,
+        window: float = _RATE_LIMIT_WINDOW,
+        max_ips: int = _RATE_LIMIT_MAX_IPS,
+    ) -> None:
+        self._max = max_attempts
+        self._window = window
+        self._max_ips = max_ips
+        # ip → deque of timestamps of recent failed attempts (insertion-ordered)
+        self._failures: dict[str, collections.deque[float]] = {}
+
+    def is_blocked(self, ip: str) -> bool:
+        self._evict(ip)
+        return len(self._failures.get(ip, [])) >= self._max
+
+    def record_failure(self, ip: str) -> None:
+        if ip not in self._failures:
+            if len(self._failures) >= self._max_ips:
+                # Evict the oldest entry to bound memory usage.
+                self._failures.pop(next(iter(self._failures)))
+            self._failures[ip] = collections.deque()
+        self._failures[ip].append(time.monotonic())
+
+    def record_success(self, ip: str) -> None:
+        self._failures.pop(ip, None)
+
+    def _evict(self, ip: str) -> None:
+        dq = self._failures.get(ip)
+        if not dq:
+            return
+        cutoff = time.monotonic() - self._window
+        while dq and dq[0] < cutoff:
+            dq.popleft()
+        if not dq:
+            del self._failures[ip]
 
 
 class AuthMiddleware:
@@ -85,6 +140,7 @@ class AuthMiddleware:
     def __init__(self, app: ASGIApp, key_store: APIKeyStore) -> None:
         self.app = app
         self._store = key_store
+        self._limiter = _RateLimiter()
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         # Lifespan events are internal ASGI machinery — pass through unconditionally.
@@ -107,11 +163,26 @@ class AuthMiddleware:
             await self.app(scope, receive, send)
             return
 
+        client_host = scope.get("client", ("unknown", 0))[0]
+
+        if self._limiter.is_blocked(client_host):
+            logger.warning(
+                "rate limited",
+                extra={"path": path, "client_host": client_host},
+            )
+            response = JSONResponse(
+                {"error": True, "code": "rate_limited", "message": "Too many failed authentication attempts"},
+                status_code=429,
+                headers={"Retry-After": str(int(_RATE_LIMIT_WINDOW))},
+            )
+            await response(scope, receive, send)
+            return
+
         headers: dict[bytes, bytes] = dict(scope.get("headers", []))
         auth_header = headers.get(b"authorization", b"").decode()
         m = _BEARER_RE.match(auth_header)
         if not m:
-            client_host = scope.get("client", ("unknown", 0))[0]
+            self._limiter.record_failure(client_host)
             logger.warning(
                 "unauthenticated request",
                 extra={"path": path, "client_host": client_host},
@@ -130,7 +201,7 @@ class AuthMiddleware:
         token = m.group(1)
         identity = self._store.validate(token)
         if identity is None:
-            client_host = scope.get("client", ("unknown", 0))[0]
+            self._limiter.record_failure(client_host)
             logger.warning(
                 "invalid API key",
                 extra={"path": path, "client_host": client_host},
@@ -141,6 +212,8 @@ class AuthMiddleware:
             )
             await response(scope, receive, send)
             return
+
+        self._limiter.record_success(client_host)
 
         logger.debug(
             "authenticated request",
