@@ -34,6 +34,14 @@ jobs:
             sleep 10
           done
 
+      - name: Pull shared images first
+        run: |
+          for attempt in 1 2 3; do
+            docker pull registry.community.greenbone.net/community/openvas-scanner:stable && \
+            docker pull alpine/socat && break
+            echo "Attempt $attempt failed, retrying in 10s..." && sleep 10
+          done
+
       - name: Pull Greenbone Community Edition images
         timeout-minutes: 25
         run: |
