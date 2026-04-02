@@ -43,7 +43,7 @@ jobs:
           done
 
       - name: Start Greenbone Community Edition stack
-        run: docker compose -f docker/openvas/compose.yaml up -d --no-build
+        run: docker compose -f docker/openvas/compose.yaml up -d --pull never
 
       - name: Wait for gvmd socket proxy
         # The socat proxy only accepts connections once gvmd's Unix socket exists.
