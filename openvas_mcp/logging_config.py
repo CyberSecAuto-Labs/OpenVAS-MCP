@@ -6,11 +6,12 @@ import json
 import logging
 import time
 
-
 # Standard LogRecord attributes — never re-emitted as extra fields.
-_LOG_RECORD_BUILTINS = frozenset(logging.LogRecord(
-    name="", level=0, pathname="", lineno=0, msg="", args=(), exc_info=None
-).__dict__.keys()) | {"message", "asctime"}
+_LOG_RECORD_BUILTINS = frozenset(
+    logging.LogRecord(
+        name="", level=0, pathname="", lineno=0, msg="", args=(), exc_info=None
+    ).__dict__.keys()
+) | {"message", "asctime"}
 
 
 class _JsonFormatter(logging.Formatter):

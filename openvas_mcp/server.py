@@ -23,7 +23,14 @@ logger = logging.getLogger(__name__)
 mcp = FastMCP("openvas", host=cfg.mcp_host, port=cfg.mcp_port)
 
 KNOWN_TOOLS: frozenset[str] = frozenset(
-    {"create_target", "start_scan", "get_scan_status", "fetch_scan_results", "list_targets", "list_tasks"}
+    {
+        "create_target",
+        "start_scan",
+        "get_scan_status",
+        "fetch_scan_results",
+        "list_targets",
+        "list_tasks",
+    }
 )
 
 # Serialises the check-and-start sequence in start_scan to prevent a TOCTOU
@@ -258,6 +265,7 @@ async def list_tasks() -> list[dict[str, Any]] | dict[str, Any]:
         "tool invoked",
         extra={"tool": "list_tasks", "client_id": identity.client_id if identity else "stdio"},
     )
+
     def _call():
         with gmp_session() as gmp:
             return gmp.get_tasks()

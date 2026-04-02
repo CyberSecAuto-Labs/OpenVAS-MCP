@@ -567,7 +567,9 @@ class TestCreateTargetCIDRPolicy:
         assert result["code"] == "forbidden"
         gmp_session_mock.create_target.assert_not_called()
 
-    async def test_host_within_allowed_cidr_permitted(self, gmp_session_mock, cidr_restricted_policy):
+    async def test_host_within_allowed_cidr_permitted(
+        self, gmp_session_mock, cidr_restricted_policy
+    ):
         resp = ET.fromstring(
             f'<create_target_response id="{_VALID_UUID}" status="201" status_text="OK"/>'
         )
@@ -575,7 +577,9 @@ class TestCreateTargetCIDRPolicy:
         result = await create_target(name="t", hosts="10.0.0.1")
         assert result["id"] == _VALID_UUID
 
-    async def test_mixed_hosts_denied_if_any_outside_cidr(self, gmp_session_mock, cidr_restricted_policy):
+    async def test_mixed_hosts_denied_if_any_outside_cidr(
+        self, gmp_session_mock, cidr_restricted_policy
+    ):
         result = await create_target(name="t", hosts="10.0.0.1,192.168.1.1")
         assert result["error"] is True
         assert result["code"] == "forbidden"

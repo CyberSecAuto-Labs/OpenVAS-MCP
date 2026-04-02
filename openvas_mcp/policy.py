@@ -108,9 +108,7 @@ def set_policy(p: Policy) -> None:
 def _parse_max_scans(value: object) -> int:
     """Parse max_concurrent_scans from a YAML value, rejecting non-integer types."""
     if isinstance(value, float) and not value.is_integer():
-        raise ValueError(
-            f"max_concurrent_scans must be a whole number, got: {value!r}"
-        )
+        raise ValueError(f"max_concurrent_scans must be a whole number, got: {value!r}")
     return int(value)  # type: ignore[arg-type]
 
 

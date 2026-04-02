@@ -88,8 +88,8 @@ _BEARER_RE = re.compile(r"^Bearer\s+(.+)$", re.IGNORECASE)
 # it returns only {"status": "ok"} with no sensitive information.
 _SKIP_PATHS = frozenset({"/health"})
 
-_RATE_LIMIT_ATTEMPTS = 10   # max failed auth attempts per window per IP
-_RATE_LIMIT_WINDOW = 60.0   # seconds
+_RATE_LIMIT_ATTEMPTS = 10  # max failed auth attempts per window per IP
+_RATE_LIMIT_WINDOW = 60.0  # seconds
 _RATE_LIMIT_MAX_IPS = 10000  # max distinct IPs tracked; oldest evicted when exceeded
 
 
@@ -171,7 +171,11 @@ class AuthMiddleware:
                 extra={"path": path, "client_host": client_host},
             )
             response = JSONResponse(
-                {"error": True, "code": "rate_limited", "message": "Too many failed authentication attempts"},
+                {
+                    "error": True,
+                    "code": "rate_limited",
+                    "message": "Too many failed authentication attempts",
+                },
                 status_code=429,
                 headers={"Retry-After": str(int(_RATE_LIMIT_WINDOW))},
             )

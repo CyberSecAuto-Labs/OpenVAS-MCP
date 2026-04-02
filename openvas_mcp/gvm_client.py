@@ -56,7 +56,9 @@ class VerifiedTLSConnection(TLSConnection):
             # Explicit opt-in: fall back to upstream CERT_NONE behaviour.
             return super()._new_socket()
 
-        transport_socket = socket.create_connection((self.hostname, self.port), timeout=self._timeout)
+        transport_socket = socket.create_connection(
+            (self.hostname, self.port), timeout=self._timeout
+        )
         if self._cafile_override:
             # Self-signed GVM cert: verify against the provided CA file.
             context = ssl.create_default_context(

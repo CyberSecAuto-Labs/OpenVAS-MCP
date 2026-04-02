@@ -110,5 +110,6 @@ try:
     cfg: Config = Config.from_env()
 except ValueError as _cfg_err:
     import sys as _sys
+
     print(f"ERROR: Invalid configuration: {_cfg_err}", file=_sys.stderr)
     _sys.exit(1)
