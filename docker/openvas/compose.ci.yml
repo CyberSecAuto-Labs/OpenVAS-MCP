@@ -1,13 +1,10 @@
-# CI override: skip pulling openvas-scanner:stable for services that already
-# have the image loaded from the cached tar. The cached image is arm64 (saved
-# from macOS); QEMU emulation in the CI workflow allows it to run on amd64.
+# CI override: pull openvas-scanner:stable as linux/arm64 and run under QEMU.
+# The amd64 registry blobs for this image are unservable from CI runner IPs;
+# the arm64 layers pull cleanly and run correctly under QEMU emulation.
 services:
   configure-openvas:
-    pull_policy: if_not_present
     platform: linux/arm64
   openvas:
-    pull_policy: if_not_present
     platform: linux/arm64
   openvasd:
-    pull_policy: if_not_present
     platform: linux/arm64

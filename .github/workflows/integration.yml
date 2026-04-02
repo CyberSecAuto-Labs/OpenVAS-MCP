@@ -32,44 +32,11 @@ jobs:
         run: pip install -e ".[dev]"
 
       - name: Pull Docker Hub images
-        run: |
-          for attempt in 1 2 3; do
-            docker pull alpine/socat && break
-            echo "Attempt $attempt failed, retrying in 10s..."
-            sleep 10
-          done
-
-      # openvas-scanner:stable contains blobs whose HTTP responses are never
-      # properly terminated by the registry from GitHub Actions runner IPs.
-      # We load the image from a pre-saved tar (release asset / cache) and use
-      # compose.ci.yml to set pull_policy: if_not_present on scanner services.
-      - name: Restore openvas-scanner image from cache
-        id: scanner-cache
-        uses: actions/cache@v4
-        with:
-          path: /tmp/docker-cache/openvas-scanner.tar.gz
-          key: openvas-scanner-${{ hashFiles('docker/openvas/compose.yaml') }}
-
-      - name: Download openvas-scanner image from release (cache miss)
-        if: steps.scanner-cache.outputs.cache-hit != 'true'
-        run: |
-          mkdir -p /tmp/docker-cache
-          curl -fL \
-            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-            -H "Accept: application/octet-stream" \
-            "https://github.com/${{ github.repository }}/releases/download/image-cache/openvas-scanner.tar.gz" \
-            -o /tmp/docker-cache/openvas-scanner.tar.gz
-
-      - name: Load openvas-scanner image
-        run: docker load -i /tmp/docker-cache/openvas-scanner.tar.gz
+        run: docker pull alpine/socat
 
       - name: Pull Greenbone Community Edition images
-        timeout-minutes: 20
-        run: |
-          for attempt in 1 2 3; do
-            docker compose -f docker/openvas/compose.yaml -f docker/openvas/compose.ci.yml pull && break
-            [ "$attempt" -lt 3 ] && echo "Pull attempt $attempt failed, retrying in 30s..." && sleep 30 || { echo "All pull attempts failed."; exit 1; }
-          done
+        timeout-minutes: 30
+        run: docker compose -f docker/openvas/compose.yaml -f docker/openvas/compose.ci.yml pull
 
       - name: Start Greenbone Community Edition stack
         run: docker compose -f docker/openvas/compose.yaml -f docker/openvas/compose.ci.yml up -d --pull never
