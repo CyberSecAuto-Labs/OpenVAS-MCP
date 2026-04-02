@@ -1,0 +1,10 @@
+# CI override: pull openvas-scanner:stable as linux/arm64 and run under QEMU.
+# The amd64 registry blobs for this image are unservable from CI runner IPs;
+# the arm64 layers pull cleanly and run correctly under QEMU emulation.
+services:
+  configure-openvas:
+    platform: linux/arm64
+  openvas:
+    platform: linux/arm64
+  openvasd:
+    platform: linux/arm64
