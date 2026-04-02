@@ -28,7 +28,7 @@ jobs:
 
       - name: Configure Docker daemon for reliable pulls
         run: |
-          echo '{"max-download-attempts": 20}' | sudo tee /etc/docker/daemon.json
+          echo '{"max-download-attempts": 20, "max-concurrent-downloads": 1}' | sudo tee /etc/docker/daemon.json
           sudo systemctl restart docker
           sleep 3
 
