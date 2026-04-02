@@ -1,0 +1,10 @@
+# CI override: skip pulling openvas-scanner:stable for services that already
+# have the image loaded from the cached tar. Without this, docker compose pull
+# re-pulls all images and hits the registry EOF issue on openvas-scanner layers.
+services:
+  configure-openvas:
+    pull_policy: if_not_present
+  openvas:
+    pull_policy: if_not_present
+  openvasd:
+    pull_policy: if_not_present

@@ -34,11 +34,10 @@ jobs:
             sleep 10
           done
 
-      # openvas-scanner:stable contains a blob (6be8b3baf026) whose HTTP
-      # response is never properly terminated by the registry when accessed
-      # from GitHub Actions runner IPs — both Docker and skopeo loop forever.
-      # We work around this by caching a docker-save tar from a local pull.
-      # See .github/workflows/seed-image-cache.yml to regenerate the cache.
+      # openvas-scanner:stable contains blobs whose HTTP responses are never
+      # properly terminated by the registry from GitHub Actions runner IPs.
+      # We load the image from a pre-saved tar (release asset / cache) and use
+      # compose.ci.yml to set pull_policy: if_not_present on scanner services.
       - name: Restore openvas-scanner image from cache
         id: scanner-cache
         uses: actions/cache@v4
@@ -63,12 +62,12 @@ jobs:
         timeout-minutes: 20
         run: |
           for attempt in 1 2 3; do
-            docker compose -f docker/openvas/compose.yaml pull && break
+            docker compose -f docker/openvas/compose.yaml -f docker/openvas/compose.ci.yml pull && break
             [ "$attempt" -lt 3 ] && echo "Pull attempt $attempt failed, retrying in 30s..." && sleep 30 || { echo "All pull attempts failed."; exit 1; }
           done
 
       - name: Start Greenbone Community Edition stack
-        run: docker compose -f docker/openvas/compose.yaml up -d --pull never
+        run: docker compose -f docker/openvas/compose.yaml -f docker/openvas/compose.ci.yml up -d --pull never
 
       - name: Wait for gvmd socket proxy
         # The socat proxy only accepts connections once gvmd's Unix socket exists.
