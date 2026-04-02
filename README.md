@@ -104,25 +104,13 @@ See [`compose.override.yaml`](compose.override.yaml) for how the socket volume i
 
 | Variable | Default | Description |
 |---|---|---|
-| `GVM_SOCKET_PATH` | `/run/gvmd/gvmd.sock` | Path to gvmd Unix socket |
-| `GVM_HOST` | — | If set, connect via TCP instead of socket (IPv4 and IPv6 supported) |
-| `GVM_PORT` | `9390` | Port (used when `GVM_HOST` is set) |
-| `GVM_TLS` | — | Set to `1` to use TLS with `GVM_HOST` |
-| `GVM_TLS_CAFILE` | — | Path to CA certificate for self-signed GVM certs (requires `GVM_TLS=1`) |
-| `GVM_TLS_NO_VERIFY` | — | Set to `1` to skip TLS certificate verification (insecure; not for production) |
-| `GVM_USERNAME` | `admin` | GVM username |
 | `GVM_PASSWORD` | — | GVM password (required) |
-| `LOG_LEVEL` | `INFO` | `DEBUG`, `INFO`, `WARNING`, `ERROR` |
+| `GVM_SOCKET_PATH` | `/run/gvmd/gvmd.sock` | Unix socket path (default connection) |
+| `GVM_HOST` | — | Connect via TCP instead of socket (IPv4 and IPv6) |
 | `MCP_TRANSPORT` | `stdio` | `stdio`, `sse`, or `streamable-http` |
-| `MCP_HOST` | `127.0.0.1` | Bind address for HTTP transports |
-| `MCP_PORT` | `8000` | Bind port for HTTP transports |
 | `MCP_API_KEYS` | — | Bearer API keys for HTTP transport auth (`token:name,...`) |
-| `MCP_ALLOW_UNAUTHENTICATED` | — | Set to `1` to run HTTP transport without API key auth (development only) |
-| `MCP_POLICY_FILE` | — | Path to YAML authorization policy file; if unset, all operations are permitted |
-| `GVM_SCAN_POLL_TIMEOUT` | `3600` | Max seconds `get_scan_status` will poll before returning a timeout error |
-| `GVM_REPORT_MAX_RESULTS` | `2000` | Max results returned by `fetch_scan_results`; `0` = unlimited |
 
-The stdio transport is zero-config. HTTP/SSE transport supports Bearer token authentication and a YAML-driven policy engine (per-client tool allow/deny, CIDR target restrictions, concurrent scan limits). See [docs/architecture.md](docs/architecture.md) for details and [`examples/policy.yaml`](examples/policy.yaml) for a starter policy.
+See [docs/configuration.md](docs/configuration.md) for the full reference, including TLS options, policy file, scan limits, and logging.
 
 ## Available tools
 
