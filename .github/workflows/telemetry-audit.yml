@@ -38,6 +38,7 @@ jobs:
             -e GVM_PASSWORD=audit-test \
             -e GVM_HOST=localhost \
             -e MCP_TRANSPORT=sse \
+            -e MCP_ALLOW_UNAUTHENTICATED=1 \
             openvas-mcp:ci-audit 2>&1 | tee /tmp/audit.txt || true
 
           echo "--- Server output ---"
