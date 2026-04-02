@@ -46,8 +46,17 @@ jobs:
           path: /tmp/docker-cache/openvas-scanner.tar.gz
           key: openvas-scanner-${{ hashFiles('docker/openvas/compose.yaml') }}
 
-      - name: Load openvas-scanner image from cache
-        if: steps.scanner-cache.outputs.cache-hit == 'true'
+      - name: Download openvas-scanner image from release (cache miss)
+        if: steps.scanner-cache.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p /tmp/docker-cache
+          curl -fL \
+            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            -H "Accept: application/octet-stream" \
+            "https://github.com/${{ github.repository }}/releases/download/image-cache/openvas-scanner.tar.gz" \
+            -o /tmp/docker-cache/openvas-scanner.tar.gz
+
+      - name: Load openvas-scanner image
         run: docker load -i /tmp/docker-cache/openvas-scanner.tar.gz
 
       - name: Pull Greenbone Community Edition images
