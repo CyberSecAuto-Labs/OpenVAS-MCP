@@ -26,8 +26,16 @@ jobs:
       - name: Install package and dev dependencies
         run: pip install -e ".[dev]"
 
+      - name: Pull Greenbone Community Edition images
+        timeout-minutes: 20
+        run: |
+          for attempt in 1 2 3; do
+            timeout 120 docker compose -f docker/openvas/compose.yaml pull && break
+            echo "Attempt $attempt stalled, restarting pull..."
+          done
+
       - name: Start Greenbone Community Edition stack
-        run: docker compose -f docker/openvas/compose.yaml up -d
+        run: docker compose -f docker/openvas/compose.yaml up -d --no-build
 
       - name: Wait for gvmd socket proxy
         # The socat proxy only accepts connections once gvmd's Unix socket exists.
