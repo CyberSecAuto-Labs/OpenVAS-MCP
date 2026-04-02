@@ -34,12 +34,12 @@ def _name() -> str:
 
 
 class TestListTargets:
-    def test_returns_list(self):
-        result = list_targets()
+    async def test_returns_list(self):
+        result = await list_targets()
         assert isinstance(result, list)
 
-    def test_each_target_has_expected_keys(self):
-        result = list_targets()
+    async def test_each_target_has_expected_keys(self):
+        result = await list_targets()
         for target in result:
             assert "id" in target
             assert "name" in target
@@ -52,15 +52,15 @@ class TestListTargets:
 
 
 class TestCreateTarget:
-    def test_create_then_appears_in_list(self, gvm):
+    async def test_create_then_appears_in_list(self, gvm):
         name = _name()
-        result = create_target(name=name, hosts="10.254.254.1")
+        result = await create_target(name=name, hosts="10.254.254.1")
 
         assert not result.get("error"), f"create_target returned error: {result}"
         target_id = result["id"]
 
         try:
-            targets = list_targets()
+            targets = await list_targets()
             assert isinstance(targets, list)
             ids = [t["id"] for t in targets]
             assert target_id in ids, f"Created target {target_id!r} not found in list_targets"
@@ -70,13 +70,13 @@ class TestCreateTarget:
             except Exception as exc:
                 _log.warning("cleanup failed: could not delete target %r: %s", target_id, exc)
 
-    def test_empty_name_validation_error(self):
-        result = create_target(name="", hosts="10.254.254.1")
+    async def test_empty_name_validation_error(self):
+        result = await create_target(name="", hosts="10.254.254.1")
         assert result.get("error") is True
         assert result["code"] == "validation_error"
 
-    def test_invalid_port_list_uuid_validation_error(self):
-        result = create_target(name=_name(), hosts="10.254.254.1", port_list_id="not-a-uuid")
+    async def test_invalid_port_list_uuid_validation_error(self):
+        result = await create_target(name=_name(), hosts="10.254.254.1", port_list_id="not-a-uuid")
         assert result.get("error") is True
         assert result["code"] == "validation_error"
 
@@ -87,12 +87,12 @@ class TestCreateTarget:
 
 
 class TestListTasks:
-    def test_returns_list(self):
-        result = list_tasks()
+    async def test_returns_list(self):
+        result = await list_tasks()
         assert isinstance(result, list)
 
-    def test_each_task_has_expected_keys(self):
-        result = list_tasks()
+    async def test_each_task_has_expected_keys(self):
+        result = await list_tasks()
         for task in result:
             assert "id" in task
             assert "name" in task
@@ -105,19 +105,19 @@ class TestListTasks:
 
 
 class TestFetchScanResults:
-    def test_invalid_uuid_returns_validation_error(self):
-        result = fetch_scan_results(task_id="not-a-uuid")
+    async def test_invalid_uuid_returns_validation_error(self):
+        result = await fetch_scan_results(task_id="not-a-uuid")
         assert result.get("error") is True
         assert result["code"] == "validation_error"
 
-    def test_severity_out_of_range_returns_validation_error(self):
-        result = fetch_scan_results(
+    async def test_severity_out_of_range_returns_validation_error(self):
+        result = await fetch_scan_results(
             task_id="12345678-1234-1234-1234-123456789abc", min_severity=11.0
         )
         assert result.get("error") is True
         assert result["code"] == "validation_error"
 
-    def test_nonexistent_task_returns_not_found(self):
-        result = fetch_scan_results(task_id="00000000-0000-0000-0000-000000000000")
+    async def test_nonexistent_task_returns_not_found(self):
+        result = await fetch_scan_results(task_id="00000000-0000-0000-0000-000000000000")
         assert result.get("error") is True
         assert result["code"] in ("not_found", "gvm_response_error", "gvm_error")
