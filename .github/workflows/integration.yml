@@ -26,6 +26,14 @@ jobs:
       - name: Install package and dev dependencies
         run: pip install -e ".[dev]"
 
+      - name: Pull Docker Hub images
+        run: |
+          for attempt in 1 2 3; do
+            docker pull alpine/socat && break
+            echo "Attempt $attempt failed, retrying in 10s..."
+            sleep 10
+          done
+
       - name: Pull Greenbone Community Edition images
         timeout-minutes: 20
         run: |
