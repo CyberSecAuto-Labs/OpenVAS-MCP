@@ -26,13 +26,19 @@ jobs:
       - name: Install package and dev dependencies
         run: pip install -e ".[dev]"
 
+      - name: Configure Docker daemon for reliable pulls
+        run: |
+          echo '{"max-download-attempts": 20}' | sudo tee /etc/docker/daemon.json
+          sudo systemctl restart docker
+          sleep 3
+
       - name: Pull Greenbone Community Edition images
-        timeout-minutes: 20
+        timeout-minutes: 30
         run: |
           for attempt in 1 2 3; do
             echo "Pull attempt $attempt..."
             docker compose -f docker/openvas/compose.yaml pull && break
-            [ "$attempt" -lt 3 ] && echo "Retrying in 15s..." && sleep 15
+            [ "$attempt" -lt 3 ] && echo "Retrying in 30s..." && sleep 30
           done
 
       - name: Start Greenbone Community Edition stack
