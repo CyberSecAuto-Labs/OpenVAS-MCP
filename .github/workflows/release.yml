@@ -75,6 +75,12 @@ jobs:
           syft "${{ env.IMAGE }}@${{ steps.build.outputs.digest }}" \
             -o cyclonedx-json > sbom.cyclonedx.json
 
+      - name: Scan SBOM for vulnerabilities (grype)
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh \
+            | sh -s -- -b /usr/local/bin
+          grype sbom:sbom.cyclonedx.json --fail-on high
+
       - name: Package release artifacts
         run: |
           mkdir -p release-artifacts
