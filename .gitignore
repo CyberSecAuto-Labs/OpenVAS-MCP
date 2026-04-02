@@ -12,3 +12,6 @@ coverage.xml
 
 # Coverage badge — generated and committed by CI, not locally
 docs/coverage-badge.svg
+
+# Agent test artefacts
+.agent-test/
