@@ -8,8 +8,8 @@
 #   - CIDRs and hostname patterns can be mixed in the same list
 # max_concurrent_scans: 0 = no limit
 default:
-  allowed_tools: []
-  allowed_cidrs: []
+  allowed_tools: ["*"]
+  allowed_cidrs: ["*"]
 
 # Per-client overrides — client name matches the label assigned in MCP_API_KEYS.
 # Example: MCP_API_KEYS="tok1:readonly,tok2:scanner,tok3:internal-scanner,tok4:admin"

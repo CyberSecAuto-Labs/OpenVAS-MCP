@@ -60,12 +60,16 @@ For any MCP client that supports stdio (Claude Desktop, Cursor, Windsurf, Cline,
 Download the compose files from the [latest release](https://github.com/CyberSecAuto-Labs/OpenVAS-MCP/releases/latest) and run:
 
 ```bash
-# Socket (OpenVAS running locally)
-GVM_PASSWORD=secret docker compose up
+# Socket (OpenVAS running locally) — with API key auth
+MCP_API_KEYS="supersecrettoken:my-agent" GVM_PASSWORD=secret docker compose up
 
-# TCP
-GVM_HOST=192.168.1.10 GVM_PASSWORD=secret docker compose up
+# TCP — with API key auth
+MCP_API_KEYS="supersecrettoken:my-agent" GVM_HOST=192.168.1.10 GVM_PASSWORD=secret docker compose up
 ```
+
+`MCP_API_KEYS` is a comma-separated list of `token:name` pairs. The `token` is the secret your MCP client will send as a Bearer token; the `name` is a label used in logs and policy lookups. Multiple clients: `"tok1:agent1,tok2:agent2"`.
+
+Pass `MCP_ALLOW_UNAUTHENTICATED=1` instead of `MCP_API_KEYS` if you want to skip auth on a trusted network.
 
 This pulls `ghcr.io/cybersecauto-labs/openvas-mcp:<version>` — a pinned, signed image. To verify the signature before running:
 
@@ -85,6 +89,18 @@ GVM_PASSWORD=secret docker compose up --build
 ```
 
 The server listens on `127.0.0.1:8000` using SSE transport.
+
+By default the HTTP server requires an API key. Set one with `MCP_API_KEYS`, or opt out explicitly for trusted networks:
+
+```bash
+# With authentication (recommended)
+MCP_API_KEYS="supersecrettoken:my-agent" GVM_PASSWORD=secret docker compose up --build
+
+# Without authentication (trusted network only)
+MCP_ALLOW_UNAUTHENTICATED=1 GVM_PASSWORD=secret docker compose up --build
+```
+
+See the published release section above for details on the `MCP_API_KEYS` format.
 
 **All-in-one dev setup** (Greenbone Community Edition + MCP server):
 
