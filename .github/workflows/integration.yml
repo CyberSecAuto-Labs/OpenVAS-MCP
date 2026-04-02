@@ -35,10 +35,11 @@ jobs:
           done
 
       - name: Pull Greenbone Community Edition images
-        timeout-minutes: 20
+        timeout-minutes: 25
         run: |
-          for attempt in 1 2 3; do
-            timeout 120 docker compose -f docker/openvas/compose.yaml pull && break
+          for attempt in $(seq 1 6); do
+            timeout 180 docker compose -f docker/openvas/compose.yaml pull && break
+            if [ "$attempt" -eq 6 ]; then echo "All pull attempts failed" && exit 1; fi
             echo "Attempt $attempt stalled, restarting pull..."
           done
 
