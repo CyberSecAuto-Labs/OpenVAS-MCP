@@ -1,3 +1,4 @@
+.security/
 .venv/
 __pycache__/
 *.pyc
