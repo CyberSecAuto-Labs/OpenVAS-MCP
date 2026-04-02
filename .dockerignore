@@ -12,3 +12,4 @@ docs/
 docker/
 compose*.yaml
 coverage.xml
+.agent-test/
