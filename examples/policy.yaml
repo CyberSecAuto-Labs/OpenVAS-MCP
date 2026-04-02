@@ -1,13 +1,18 @@
-# default_policy applies to any client not listed under `clients`.
+# OpenVAS MCP authorization policy
+#
+# default applies to any client not listed under `clients`.
 # allowed_tools: ["*"] = all tools; list specific tools to restrict
-# allowed_cidrs: ["*"] = any target; list CIDR ranges to restrict
+# allowed_cidrs: ["*"] = any target; list CIDR ranges and/or hostname patterns to restrict
+#   - CIDR ranges:        "10.0.0.0/8", "192.168.1.5"
+#   - Hostname glob patterns (fnmatch): "*.internal", "db.prod", "scan-*.example.com"
+#   - CIDRs and hostname patterns can be mixed in the same list
 # max_concurrent_scans: 0 = no limit
-default_policy:
+default:
   allowed_tools: []
   allowed_cidrs: []
 
 # Per-client overrides — client name matches the label assigned in MCP_API_KEYS.
-# Example: MCP_API_KEYS="tok1:readonly,tok2:scanner,tok3:admin"
+# Example: MCP_API_KEYS="tok1:readonly,tok2:scanner,tok3:internal-scanner,tok4:admin"
 clients:
   # Read-only agent: can query results but cannot launch scans
   readonly:
@@ -19,6 +24,12 @@ clients:
     allowed_tools: ["*"]
     allowed_cidrs: ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"]
     max_concurrent_scans: 2
+
+  # Internal-only agent: CIDR + hostname glob patterns mixed
+  internal-scanner:
+    allowed_tools: ["*"]
+    allowed_cidrs: ["10.0.0.0/8", "*.internal", "db.prod"]
+    max_concurrent_scans: 1
 
   # Admin: unrestricted
   admin:

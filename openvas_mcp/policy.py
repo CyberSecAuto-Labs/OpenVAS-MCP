@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import fnmatch
 import ipaddress
 import logging
 from dataclasses import dataclass, field
@@ -47,22 +48,45 @@ class Policy:
         if not pol.allowed_cidrs:
             return False
         host = host.strip()
+
+        # Try to parse as an IP address (single host).
         try:
             addr = ipaddress.ip_address(host)
-            return any(
-                addr in ipaddress.ip_network(cidr, strict=False) for cidr in pol.allowed_cidrs
-            )
+            # Unwrap IPv4-mapped IPv6 (e.g. ::ffff:10.0.0.1 → 10.0.0.1) so it
+            # matches IPv4 CIDR rules correctly.
+            if isinstance(addr, ipaddress.IPv6Address) and addr.ipv4_mapped:
+                addr = addr.ipv4_mapped
+            for entry in pol.allowed_cidrs:
+                try:
+                    if addr in ipaddress.ip_network(entry, strict=False):
+                        return True
+                except (ValueError, TypeError):
+                    pass
+            return False
         except ValueError:
             pass
+
+        # Try to parse as a CIDR range (the host argument is itself a range).
         try:
             net = ipaddress.ip_network(host, strict=False)
-            return any(
-                net.subnet_of(ipaddress.ip_network(cidr, strict=False))  # type: ignore[arg-type]
-                for cidr in pol.allowed_cidrs
-            )
+            for entry in pol.allowed_cidrs:
+                try:
+                    if net.subnet_of(ipaddress.ip_network(entry, strict=False)):  # type: ignore[arg-type]
+                        return True
+                except (ValueError, TypeError):
+                    pass
+            return False
         except ValueError:
             pass
-        # Hostname — not matched by CIDR rules, deny
+
+        # Hostname — match against any non-CIDR entries in allowed_cidrs using
+        # fnmatch so operators can write e.g. "*.internal" or "db.prod".
+        for entry in pol.allowed_cidrs:
+            try:
+                ipaddress.ip_network(entry, strict=False)
+            except ValueError:
+                if fnmatch.fnmatch(host.lower(), entry.lower()):
+                    return True
         return False
 
     def max_concurrent_scans(self, identity: ClientIdentity | None = None) -> int:
@@ -81,7 +105,16 @@ def set_policy(p: Policy) -> None:
     _policy = p
 
 
-def load_policy(path: str | None) -> Policy:
+def _parse_max_scans(value: object) -> int:
+    """Parse max_concurrent_scans from a YAML value, rejecting non-integer types."""
+    if isinstance(value, float) and not value.is_integer():
+        raise ValueError(
+            f"max_concurrent_scans must be a whole number, got: {value!r}"
+        )
+    return int(value)  # type: ignore[arg-type]
+
+
+def load_policy(path: str | None, known_tools: frozenset[str] | None = None) -> Policy:
     """Load policy from a YAML file, or return the permissive default if no path is given."""
     if not path:
         return Policy()
@@ -89,8 +122,7 @@ def load_policy(path: str | None) -> Policy:
         with open(path) as f:
             data = yaml.safe_load(f) or {}
     except FileNotFoundError:
-        logger.warning("policy file not found, using permissive default", extra={"path": path})
-        return Policy()
+        raise ValueError(f"Policy file not found: {path!r}") from None
     except Exception as e:
         raise ValueError(f"Failed to load policy file {path!r}: {e}") from e
 
@@ -99,14 +131,27 @@ def load_policy(path: str | None) -> Policy:
         clients[client_id] = ClientPolicy(
             allowed_tools=cd.get("allowed_tools", ["*"]),
             allowed_cidrs=cd.get("allowed_cidrs", ["*"]),
-            max_concurrent_scans=int(cd.get("max_concurrent_scans", 0)),
+            max_concurrent_scans=_parse_max_scans(cd.get("max_concurrent_scans", 0)),
         )
 
     default_data = data.get("default") or {}
     default = ClientPolicy(
         allowed_tools=default_data.get("allowed_tools", ["*"]),
         allowed_cidrs=default_data.get("allowed_cidrs", ["*"]),
-        max_concurrent_scans=int(default_data.get("max_concurrent_scans", 0)),
+        max_concurrent_scans=_parse_max_scans(default_data.get("max_concurrent_scans", 0)),
     )
 
-    return Policy(clients=clients, default_policy=default)
+    policy = Policy(clients=clients, default_policy=default)
+
+    if known_tools is not None:
+        all_tool_entries: list[str] = []
+        for cp in list(clients.values()) + [default]:
+            all_tool_entries.extend(cp.allowed_tools)
+        for tool in all_tool_entries:
+            if tool != "*" and tool not in known_tools:
+                logger.warning(
+                    "unknown tool name in policy — entry will never match",
+                    extra={"tool": tool, "known_tools": sorted(known_tools)},
+                )
+
+    return policy
