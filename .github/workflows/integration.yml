@@ -34,24 +34,21 @@ jobs:
             sleep 10
           done
 
-      - name: Configure Docker for sequential layer downloads and debug logging
-        run: |
-          echo '{"max-concurrent-downloads": 1, "debug": true}' | sudo tee /etc/docker/daemon.json
-          sudo systemctl restart docker
-          sleep 3
+      # openvas-scanner:stable contains a blob (6be8b3baf026) whose HTTP
+      # response is never properly terminated by the registry when accessed
+      # from GitHub Actions runner IPs — both Docker and skopeo loop forever.
+      # We work around this by caching a docker-save tar from a local pull.
+      # See .github/workflows/seed-image-cache.yml to regenerate the cache.
+      - name: Restore openvas-scanner image from cache
+        id: scanner-cache
+        uses: actions/cache@v4
+        with:
+          path: /tmp/docker-cache/openvas-scanner.tar.gz
+          key: openvas-scanner-${{ hashFiles('docker/openvas/compose.yaml') }}
 
-      - name: Pre-pull openvas-scanner via skopeo
-        # Docker streams blobs while decompressing; the registry closes the TCP
-        # connection without a proper HTTP termination on blob 6be8b3baf026,
-        # causing Docker to discard a correctly-extracted 78MB layer and retry
-        # forever. skopeo uses Go's net/http which considers the download done
-        # when Content-Length bytes are received, sidestepping the issue.
-        run: |
-          sudo apt-get install -y skopeo
-          skopeo copy \
-            --override-os linux --override-arch amd64 \
-            docker://registry.community.greenbone.net/community/openvas-scanner:stable \
-            docker-daemon:registry.community.greenbone.net/community/openvas-scanner:stable
+      - name: Load openvas-scanner image from cache
+        if: steps.scanner-cache.outputs.cache-hit == 'true'
+        run: docker load -i /tmp/docker-cache/openvas-scanner.tar.gz
 
       - name: Pull Greenbone Community Edition images
         timeout-minutes: 20

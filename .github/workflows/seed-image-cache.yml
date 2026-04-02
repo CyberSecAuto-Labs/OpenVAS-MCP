@@ -1,0 +1,50 @@
+name: Seed Docker image cache
+
+# Run this manually after building the openvas-scanner tar locally:
+#
+#   docker save registry.community.greenbone.net/community/openvas-scanner:stable \
+#     | gzip > openvas-scanner.tar.gz
+#
+# Then upload it as a release asset tagged "image-cache", and trigger this
+# workflow from the Actions tab. It downloads the tar, verifies it loads into
+# Docker, and writes it into the actions/cache store used by integration.yml.
+#
+# The cache key matches integration.yml so the integration workflow gets an
+# immediate hit on its next run.
+on:
+  workflow_dispatch:
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  IMAGE: registry.community.greenbone.net/community/openvas-scanner:stable
+  RELEASE_TAG: image-cache
+  ASSET_NAME: openvas-scanner.tar.gz
+
+jobs:
+  seed:
+    name: Seed openvas-scanner image cache
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download image tar from release asset
+        run: |
+          mkdir -p /tmp/docker-cache
+          curl -fL \
+            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            -H "Accept: application/octet-stream" \
+            "${{ github.server_url }}/${{ github.repository }}/releases/download/${{ env.RELEASE_TAG }}/${{ env.ASSET_NAME }}" \
+            -o /tmp/docker-cache/openvas-scanner.tar.gz
+
+      - name: Verify image loads correctly
+        run: |
+          docker load -i /tmp/docker-cache/openvas-scanner.tar.gz
+          docker image inspect "$IMAGE" > /dev/null
+          echo "Image loaded successfully."
+
+      - name: Write to actions/cache
+        uses: actions/cache@v4
+        with:
+          path: /tmp/docker-cache/openvas-scanner.tar.gz
+          key: openvas-scanner-${{ hashFiles('docker/openvas/compose.yaml') }}
