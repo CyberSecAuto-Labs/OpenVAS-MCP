@@ -1,0 +1,73 @@
+name: Mirror Greenbone images to GHCR
+
+# Copies all Greenbone Community Edition images from
+# registry.community.greenbone.net to ghcr.io/cybersecauto-labs/greenbone/.
+#
+# The Greenbone registry drops connections mid-transfer for large blobs when
+# accessed from GitHub Actions runner IPs. GHCR is reliable from Actions.
+# The integration test workflow pulls from this mirror instead.
+#
+# Run manually after a new Greenbone stable release, or let the weekly
+# schedule keep the mirror fresh.
+
+on:
+  schedule:
+    - cron: "0 4 * * 1"  # Every Monday at 04:00 UTC
+  workflow_dispatch:
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  SRC: registry.community.greenbone.net/community
+  DST: ghcr.io/cybersecauto-labs/greenbone
+
+jobs:
+  mirror:
+    name: Mirror Greenbone images
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+
+    steps:
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Mirror images
+        run: |
+          mirror() {
+            local name=$1 tag=$2
+            echo "--- $name:$tag"
+            skopeo copy --all \
+              "docker://${{ env.SRC }}/${name}:${tag}" \
+              "docker://${{ env.DST }}/${name}:${tag}"
+          }
+
+          # Feed / data images
+          mirror vulnerability-tests latest
+          mirror notus-data         latest
+          mirror scap-data          latest
+          mirror cert-bund-data     latest
+          mirror dfn-cert-data      latest
+          mirror data-objects       latest
+          mirror report-formats     latest
+          mirror gpg-data           latest
+
+          # Core services
+          mirror redis-server       latest
+          mirror pg-gvm             stable
+          mirror pg-gvm-migrator    stable
+          mirror gvmd               stable
+          mirror gsa                stable-slim
+          mirror gsad               stable
+          mirror gvm-config         latest
+          mirror nginx              latest
+
+          # Scanner services
+          mirror openvas-scanner    stable
+          mirror ospd-openvas       stable
+
+          # Tooling
+          mirror gvm-tools          latest
