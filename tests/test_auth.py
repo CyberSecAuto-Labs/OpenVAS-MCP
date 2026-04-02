@@ -8,8 +8,8 @@ from openvas_mcp.auth import (
     APIKeyStore,
     AuthMiddleware,
     ClientIdentity,
-    _RateLimiter,
     _client_ctx,
+    _RateLimiter,
     get_current_client,
 )
 
