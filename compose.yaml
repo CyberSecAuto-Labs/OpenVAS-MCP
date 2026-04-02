@@ -10,12 +10,12 @@ services:
       GVM_PORT: ${GVM_PORT:-9390}
       GVM_TLS: ${GVM_TLS:-}
       GVM_USERNAME: ${GVM_USERNAME:-admin}
-      GVM_PASSWORD: ${GVM_PASSWORD:?Set GVM_PASSWORD to the GVM service account password}
+      GVM_PASSWORD: ${GVM_PASSWORD:-}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       MCP_TRANSPORT: ${MCP_TRANSPORT:-sse}
       MCP_PORT: ${MCP_PORT:-8000}
       MCP_API_KEYS: ${MCP_API_KEYS:-}
-      MCP_POLICY_FILE: ${MCP_POLICY_FILE:-examples/policy.yaml}
+      MCP_POLICY_FILE: ${MCP_POLICY_FILE-examples/policy.yaml}
       MCP_ALLOW_UNAUTHENTICATED: ${MCP_ALLOW_UNAUTHENTICATED:-}
     ports:
       - "127.0.0.1:${MCP_PORT:-8000}:${MCP_PORT:-8000}"
