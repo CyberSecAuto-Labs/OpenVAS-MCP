@@ -57,7 +57,7 @@ class Policy:
         try:
             net = ipaddress.ip_network(host, strict=False)
             return any(
-                net.subnet_of(ipaddress.ip_network(cidr, strict=False))
+                net.subnet_of(ipaddress.ip_network(cidr, strict=False))  # type: ignore[arg-type]
                 for cidr in pol.allowed_cidrs
             )
         except ValueError:

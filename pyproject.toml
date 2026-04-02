@@ -20,6 +20,7 @@ dev = [
     "genbadge[coverage]>=1.1",
     "ruff>=0.9",
     "mypy>=1.0",
+    "types-PyYAML>=6.0",
 ]
 
 [tool.setuptools.packages.find]
@@ -61,3 +62,7 @@ ignore_missing_imports = true
 check_untyped_defs = true
 warn_redundant_casts = true
 warn_unused_ignores = true
+
+[[tool.mypy.overrides]]
+module = "gvm.*"
+ignore_errors = true

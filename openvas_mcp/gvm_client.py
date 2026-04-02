@@ -6,6 +6,7 @@ import logging
 import socket
 from collections.abc import Generator
 from contextlib import contextmanager
+from typing import Any
 
 from gvm.connections import TLSConnection, UnixSocketConnection
 from gvm.connections._unix import AbstractGvmConnection
@@ -55,7 +56,7 @@ def _make_connection():
 
 
 @contextmanager
-def gmp_session() -> Generator[Gmp, None, None]:
+def gmp_session() -> Generator[Any, None, None]:
     """Yield an authenticated GMP session, closing it on exit."""
     connection = _make_connection()
     transform = EtreeCheckCommandTransform()

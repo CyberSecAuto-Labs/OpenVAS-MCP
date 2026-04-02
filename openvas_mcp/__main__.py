@@ -58,7 +58,7 @@ def main():
         )
         app = base_app
     else:
-        app = AuthMiddleware(base_app, key_store=key_store)
+        app = AuthMiddleware(base_app, key_store=key_store)  # type: ignore[assignment]
 
     async def _serve() -> None:
         config = uvicorn.Config(app, host=cfg.mcp_host, port=cfg.mcp_port)
