@@ -34,19 +34,44 @@ jobs:
             sleep 10
           done
 
-      - name: Configure Docker for sequential layer downloads
+      - name: Configure Docker for sequential layer downloads and debug logging
         run: |
-          echo '{"max-concurrent-downloads": 1}' | sudo tee /etc/docker/daemon.json
+          echo '{"max-concurrent-downloads": 1, "debug": true}' | sudo tee /etc/docker/daemon.json
           sudo systemctl restart docker
           sleep 3
 
+      - name: Pre-pull openvas-scanner (most problematic image)
+        timeout-minutes: 20
+        run: |
+          IMAGE=registry.community.greenbone.net/community/openvas-scanner:stable
+          for attempt in $(seq 1 8); do
+            docker pull --platform linux/amd64 "$IMAGE" && break
+            echo "Attempt $attempt/8 failed, retrying in 60s..."
+            [ "$attempt" -lt 8 ] && sleep 60 || { echo "All pre-pull attempts failed."; exit 1; }
+          done
+
+      - name: Debug — Docker daemon logs after openvas-scanner pull
+        if: always()
+        run: |
+          echo "=== Docker daemon logs (last 60 lines) ==="
+          sudo journalctl -u docker -n 60 --no-pager
+          echo "=== Registry manifest (stable) ==="
+          TOKEN=$(curl -sf "https://registry.community.greenbone.net/token?service=registry.community.greenbone.net&scope=repository:community/openvas-scanner:pull" | python3 -c "import sys,json; print(json.load(sys.stdin)['token'])" 2>/dev/null || echo "")
+          if [ -n "$TOKEN" ]; then
+            curl -sf -H "Authorization: Bearer $TOKEN" \
+              -H "Accept: application/vnd.docker.distribution.manifest.v2+json,application/vnd.oci.image.manifest.v1+json" \
+              "https://registry.community.greenbone.net/v2/community/openvas-scanner/manifests/stable" \
+              | python3 -m json.tool 2>/dev/null || echo "manifest fetch failed"
+          else
+            echo "token fetch failed (unauthenticated registry)"
+          fi
+
       - name: Pull Greenbone Community Edition images
-        timeout-minutes: 30
+        timeout-minutes: 20
         run: |
           for attempt in 1 2 3; do
             docker compose -f docker/openvas/compose.yaml pull && break
-            echo "Pull attempt $attempt failed — retrying (already-pulled layers are cached)..."
-            sleep 30
+            [ "$attempt" -lt 3 ] && echo "Pull attempt $attempt failed, retrying in 30s..." && sleep 30 || { echo "All pull attempts failed."; exit 1; }
           done
 
       - name: Start Greenbone Community Edition stack
