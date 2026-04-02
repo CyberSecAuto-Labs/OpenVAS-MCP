@@ -42,7 +42,12 @@ jobs:
 
       - name: Pull Greenbone Community Edition images
         timeout-minutes: 30
-        run: docker compose -f docker/openvas/compose.yaml pull
+        run: |
+          for attempt in 1 2 3; do
+            docker compose -f docker/openvas/compose.yaml pull && break
+            echo "Pull attempt $attempt failed — retrying (already-pulled layers are cached)..."
+            sleep 30
+          done
 
       - name: Start Greenbone Community Edition stack
         run: docker compose -f docker/openvas/compose.yaml up -d --pull never
