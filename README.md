@@ -8,27 +8,39 @@
 
 A self-hosted MCP server that gives AI agents structured access to [OpenVAS / Greenbone](https://github.com/greenbone/openvas-scanner) vulnerability scanning — without sending your data anywhere.
 
-## Why this exists
-
 OpenVAS has no native interface for AI agents. Most integrations require cloud connectivity or expose GVM credentials to every client. OpenVAS-MCP solves this:
 
 - **Local-first.** Talks only to your GVM instance. No telemetry, no external calls — [verified by CI](.github/workflows/telemetry-audit.yml).
 - **Credential isolation.** AI agents authenticate to the MCP server; the server holds the single GVM service account.
 - **Thin bridge.** Returns structured scan data as-is. Analysis and reporting logic belong in the agent or a platform built on top.
 
-## Architecture
-
-```
-AI agent → MCP client → OpenVAS MCP server → GMP API → OpenVAS / Greenbone
-```
-
-Supports stdio (local, zero-config) and HTTP/SSE transports. See [docs/architecture.md](docs/architecture.md) for details.
+See [docs/architecture.md](docs/architecture.md) for a full architecture diagram and design details.
 
 ## Quick start
 
-**Requirements:** Python 3.10+ or Docker, a running OpenVAS / Greenbone instance.
+### 0. Vibeinstall (optional, if you trust claude more than yourself)
 
-### Local / Claude Desktop (stdio)
+Run in your terminal:
+
+```bash
+claude "install this, make no mistake."
+```
+
+If you prefer to stay in control, follow the manual setup below.
+
+### 1. Get a GVM instance
+
+Don't have one? Spin up the bundled Greenbone Community Edition stack:
+
+```bash
+docker compose -f docker/openvas/compose.yaml up -d
+```
+
+### 2. Connect an MCP client
+
+#### stdio (Claude Desktop, Cursor, Windsurf, Cline, …)
+
+**Requirements:** Python 3.10+
 
 ```bash
 git clone https://github.com/CyberSecAuto-Labs/OpenVAS-MCP
@@ -36,69 +48,81 @@ cd OpenVAS-MCP
 python3.11 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-GVM_PASSWORD=secret python -m openvas_mcp
 ```
 
-For any MCP client that supports stdio (Claude Desktop, Cursor, Windsurf, Cline, Continue, Zed, …), add to `mcpServers` in your config:
+Add to `mcpServers` in your client config file:
 
 ```json
 {
   "mcpServers": {
     "openvas": {
-      "command": "/path/to/.venv/bin/python",
+      "command": "/path/to/.venv/bin/python",  // ← edit this to your venv path
       "args": ["-m", "openvas_mcp"],
-      "env": { "GVM_PASSWORD": "secret" }
+      "env": { "GVM_PASSWORD": "secret" }  // ← edit this to your GVM password
     }
   }
 }
 ```
 
-### Networked deployment (SSE)
+Config file locations:
 
-**Using a published release** (recommended for production):
+| Client | Path |
+|---|---|
+| Claude Desktop (macOS) | `~/Library/Application Support/Claude/claude_desktop_config.json` |
+| Claude Desktop (Windows) | `%APPDATA%\Claude\claude_desktop_config.json` |
+| Cursor | `~/.cursor/mcp.json` |
+| Windsurf | `~/.codeium/windsurf/mcp_config.json` |
+| Cline / Roo Code | via the MCP panel in the VS Code extension |
+
+#### HTTP/SSE (networked agents)
+
+**Requirements:** Docker
 
 Download the compose files from the [latest release](https://github.com/CyberSecAuto-Labs/OpenVAS-MCP/releases/latest) and run:
 
 ```bash
-# Socket (OpenVAS running locally)
-GVM_PASSWORD=secret docker compose up
+# GVM running locally via Unix socket
+MCP_API_KEYS="supersecrettoken:my-agent" GVM_PASSWORD=secret docker compose up
 
-# TCP
-GVM_HOST=192.168.1.10 GVM_PASSWORD=secret docker compose up
+# GVM on a remote host via TCP
+MCP_API_KEYS="supersecrettoken:my-agent" GVM_HOST=192.168.1.10 GVM_PASSWORD=secret docker compose up
 ```
 
-This pulls `ghcr.io/cybersecauto-labs/openvas-mcp:<version>` — a pinned, signed image. To verify the signature before running:
+> [!NOTE]
+> `MCP_API_KEYS` is a comma-separated list of `token:name` pairs sent as a Bearer token by the MCP client. Multiple clients: `"tok1:agent1,tok2:agent2"`. Pass `MCP_ALLOW_UNAUTHENTICATED=1` instead to skip auth on a trusted network.
 
-```bash
-cosign verify \
-  --certificate-identity-regexp "https://github.com/CyberSecAuto-Labs/OpenVAS-MCP/.github/workflows/release.yml@refs/tags/.*" \
-  --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
-  ghcr.io/cybersecauto-labs/openvas-mcp:<version>
+Point your MCP client at the server:
+
+```json
+{
+  "mcpServers": {
+    "openvas": {
+      "url": "http://your-server:8000/sse",  // ← edit this to your server address
+      "headers": {
+        "Authorization": "Bearer supersecrettoken"  // ← your MCP_API_KEYS token
+      }
+    }
+  }
+}
 ```
 
-**Building from source** (for development or unreleased changes):
+> [!WARNING]
+> Plain TCP connections (`GVM_HOST` set, `GVM_TLS` unset) send GVM credentials unencrypted. Use `GVM_TLS=1` or a Unix socket for anything beyond local dev.
 
-```bash
-git clone https://github.com/CyberSecAuto-Labs/OpenVAS-MCP
-cd OpenVAS-MCP
-GVM_PASSWORD=secret docker compose up --build
-```
+### All-in-one dev setup
 
-The server listens on `127.0.0.1:8000` using SSE transport.
-
-**All-in-one dev setup** (Greenbone Community Edition + MCP server):
+Greenbone Community Edition + MCP server from source in one go:
 
 ```bash
 # Start the Greenbone stack
 docker compose -f docker/openvas/compose.yaml up -d
 
 # Start the MCP server, connected via gvmd socket
-GVM_PASSWORD=secret docker compose -f compose.yaml -f compose.override.yaml up
+GVM_PASSWORD=secret docker compose -f compose.yaml -f compose.override.yaml up --build
 ```
 
-See [`compose.override.yaml`](compose.override.yaml) for how the socket volume is mounted.
-
-> **Note:** Plain TCP connections (`GVM_HOST` set, `GVM_TLS` unset) send GVM credentials unencrypted. Use `GVM_TLS=1` or a Unix socket for anything beyond local dev.
+> [!TIP]
+> See [`compose.override.yaml`](compose.override.yaml) for how the socket volume is mounted.
 
 ## Configuration
 
@@ -129,14 +153,26 @@ See [docs/configuration.md](docs/configuration.md) for the full reference, inclu
 
 Every release image is:
 
-- **Signed** with [cosign](https://github.com/sigstore/cosign) keyless OIDC signing — no long-lived key to compromise. Verify with `cosign verify` as shown in the quickstart.
+- **Signed** with [cosign](https://github.com/sigstore/cosign) keyless OIDC signing — no long-lived key to compromise.
 - **SBOM attached** — a CycloneDX JSON bill of materials is attached to each GitHub Release for vulnerability scanning and compliance audits.
 - **Telemetry-audited** — the [`telemetry-audit` workflow](.github/workflows/telemetry-audit.yml) runs the server in a network-isolated container (`--network=none`) on every push and PR, asserting no unexpected outbound connections.
 
-## Notes
+Verify the image signature before running:
 
-See [docs/design.md](docs/design.md) for design decisions and known limitations.
+```bash
+cosign verify \
+  --certificate-identity-regexp "https://github.com/CyberSecAuto-Labs/OpenVAS-MCP/.github/workflows/release.yml@refs/tags/.*" \
+  --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+  ghcr.io/cybersecauto-labs/openvas-mcp:<version>
+```
+
+## Docs
+
+- [docs/architecture.md](docs/architecture.md) — architecture diagram, component overview, and transport details
+- [docs/configuration.md](docs/configuration.md) — full environment variable reference, TLS, policy file, scan limits, logging
+- [docs/design.md](docs/design.md) — design decisions and known limitations
+- [docs/ci.md](docs/ci.md) — CI workflows, guarantees, and tradeoffs
 
 ## License
 
-Apache 2.0
+[Apache 2.0](LICENSE)

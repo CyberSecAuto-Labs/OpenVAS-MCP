@@ -11,11 +11,15 @@ All configuration is read from environment variables at startup. Invalid values 
 | `GVM_PORT` | `9390` | Port (used when `GVM_HOST` is set) |
 | `GVM_TLS` | — | Set to `1` to use TLS with `GVM_HOST` |
 | `GVM_TLS_CAFILE` | — | Path to CA certificate for self-signed GVM certs (requires `GVM_TLS=1`) |
-| `GVM_TLS_NO_VERIFY` | — | Set to `1` to skip TLS certificate verification — insecure, not for production |
+| `GVM_TLS_NO_VERIFY` | — | Set to `1` to skip TLS certificate verification |
 | `GVM_USERNAME` | `admin` | GVM username — a dedicated least-privilege account is recommended |
 | `GVM_PASSWORD` | — | GVM password (required) |
 
+> [!WARNING]
 > Plain TCP connections (`GVM_HOST` set, `GVM_TLS` unset) send GVM credentials unencrypted. Use `GVM_TLS=1` or a Unix socket for production deployments.
+
+> [!CAUTION]
+> `GVM_TLS_NO_VERIFY=1` disables certificate verification entirely. Do not use in production.
 
 ## MCP server
 
@@ -27,6 +31,9 @@ All configuration is read from environment variables at startup. Invalid values 
 | `MCP_API_KEYS` | — | Bearer API keys for HTTP transport auth, as `token:name` pairs separated by commas (e.g. `tok1:agent,tok2:readonly`) |
 | `MCP_ALLOW_UNAUTHENTICATED` | — | Set to `1` to run HTTP transport without API key authentication — development only |
 | `MCP_POLICY_FILE` | — | Path to YAML authorization policy file; if unset, all authenticated clients have full access. Missing file = startup failure. |
+
+> [!IMPORTANT]
+> If `MCP_API_KEYS` is not set and `MCP_ALLOW_UNAUTHENTICATED` is not explicitly set to `1`, the server will refuse to start. This prevents accidentally exposing the HTTP transport without auth.
 
 ## Scan behaviour
 
@@ -50,6 +57,6 @@ When `MCP_POLICY_FILE` is set, the server loads a YAML policy on startup that co
 Capabilities:
 - **Tool allow/deny** — restrict which MCP tools a client can call
 - **CIDR target restriction** — limit which hosts a client can scan; non-CIDR entries are treated as fnmatch hostname patterns (e.g. `*.internal`)
-- **Concurrent scan limit** — cap the number of simultaneously running scans per client (counted GVM-globally)
+- **Concurrent scan limit** — cap the number of simultaneously running scans (counted GVM-globally)
 
 See [architecture.md](architecture.md) for the full auth and policy model.
