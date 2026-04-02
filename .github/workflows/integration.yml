@@ -34,22 +34,15 @@ jobs:
             sleep 10
           done
 
-      - name: Pull shared images first
+      - name: Configure Docker for sequential layer downloads
         run: |
-          for attempt in 1 2 3; do
-            docker pull registry.community.greenbone.net/community/openvas-scanner:stable && \
-            docker pull alpine/socat && break
-            echo "Attempt $attempt failed, retrying in 10s..." && sleep 10
-          done
+          echo '{"max-concurrent-downloads": 1}' | sudo tee /etc/docker/daemon.json
+          sudo systemctl restart docker
+          sleep 3
 
       - name: Pull Greenbone Community Edition images
-        timeout-minutes: 25
-        run: |
-          for attempt in $(seq 1 6); do
-            timeout 180 docker compose -f docker/openvas/compose.yaml pull && break
-            if [ "$attempt" -eq 6 ]; then echo "All pull attempts failed" && exit 1; fi
-            echo "Attempt $attempt stalled, restarting pull..."
-          done
+        timeout-minutes: 30
+        run: docker compose -f docker/openvas/compose.yaml pull
 
       - name: Start Greenbone Community Edition stack
         run: docker compose -f docker/openvas/compose.yaml up -d --pull never
