@@ -40,31 +40,18 @@ jobs:
           sudo systemctl restart docker
           sleep 3
 
-      - name: Pre-pull openvas-scanner (most problematic image)
-        timeout-minutes: 20
+      - name: Pre-pull openvas-scanner via skopeo
+        # Docker streams blobs while decompressing; the registry closes the TCP
+        # connection without a proper HTTP termination on blob 6be8b3baf026,
+        # causing Docker to discard a correctly-extracted 78MB layer and retry
+        # forever. skopeo uses Go's net/http which considers the download done
+        # when Content-Length bytes are received, sidestepping the issue.
         run: |
-          IMAGE=registry.community.greenbone.net/community/openvas-scanner:stable
-          for attempt in $(seq 1 8); do
-            docker pull --platform linux/amd64 "$IMAGE" && break
-            echo "Attempt $attempt/8 failed, retrying in 60s..."
-            [ "$attempt" -lt 8 ] && sleep 60 || { echo "All pre-pull attempts failed."; exit 1; }
-          done
-
-      - name: Debug — Docker daemon logs after openvas-scanner pull
-        if: always()
-        run: |
-          echo "=== Docker daemon logs (last 60 lines) ==="
-          sudo journalctl -u docker -n 60 --no-pager
-          echo "=== Registry manifest (stable) ==="
-          TOKEN=$(curl -sf "https://registry.community.greenbone.net/token?service=registry.community.greenbone.net&scope=repository:community/openvas-scanner:pull" | python3 -c "import sys,json; print(json.load(sys.stdin)['token'])" 2>/dev/null || echo "")
-          if [ -n "$TOKEN" ]; then
-            curl -sf -H "Authorization: Bearer $TOKEN" \
-              -H "Accept: application/vnd.docker.distribution.manifest.v2+json,application/vnd.oci.image.manifest.v1+json" \
-              "https://registry.community.greenbone.net/v2/community/openvas-scanner/manifests/stable" \
-              | python3 -m json.tool 2>/dev/null || echo "manifest fetch failed"
-          else
-            echo "token fetch failed (unauthenticated registry)"
-          fi
+          sudo apt-get install -y skopeo
+          skopeo copy \
+            --override-os linux --override-arch amd64 \
+            docker://registry.community.greenbone.net/community/openvas-scanner:stable \
+            docker-daemon:registry.community.greenbone.net/community/openvas-scanner:stable
 
       - name: Pull Greenbone Community Edition images
         timeout-minutes: 20
