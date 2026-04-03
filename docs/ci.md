@@ -22,7 +22,7 @@ Runs three jobs in parallel:
 
 **Triggers:** push and PRs targeting `main` only (not `develop`)
 
-Stands up the full Greenbone Community Edition stack via Docker Compose, sets a known admin password, and runs `tests/integration/` against a live `gvmd` instance.
+Stands up the full [Greenbone Community Edition](https://greenbone.github.io/docs/latest/22.4/container/index.html#download) stack via Docker Compose, sets a known admin password, and runs `tests/integration/` against a live `gvmd` instance.
 
 **Guarantees:** GMP authentication, session management, and the full tool call path work against a real scanner before anything reaches `main`.
 
@@ -64,12 +64,12 @@ Builds the image and runs the server inside a `--network=none` Docker container 
 
 **Triggers:** push of a version tag (`v*.*.*`)
 
-Builds and pushes a versioned image to GHCR, signs it with [cosign](https://github.com/sigstore/cosign) keyless OIDC signing, generates a CycloneDX SBOM with [syft](https://github.com/anchore/syft), scans it with [grype](https://github.com/anchore/grype) (fails on `high` severity findings), and creates a GitHub Release with the changelog, SBOM, and compose files attached.
+Builds and pushes a versioned image to GHCR, signs it with [cosign](https://github.com/sigstore/cosign) keyless OIDC signing, generates a [CycloneDX](https://cyclonedx.org) SBOM with [syft](https://github.com/anchore/syft), scans it with [grype](https://github.com/anchore/grype) (fails on `high` severity findings), and creates a GitHub Release with the changelog, SBOM, and compose files attached.
 
 **Guarantees:** every published image has a verifiable provenance chain (OIDC-signed by the Actions workflow identity, not a long-lived key), a bill of materials, and has passed a vulnerability scan at build time.
 
 > [!NOTE]
-> grype scans the SBOM at release time, not continuously. A CVE disclosed after a release will not re-trigger the scan. Dependabot handles dependency updates that feed into future releases.
+> grype scans the SBOM at release time, not continuously. A CVE disclosed after a release will not re-trigger the scan. [Dependabot](https://docs.github.com/en/code-security/dependabot) handles dependency updates that feed into future releases.
 
 ---
 
@@ -77,7 +77,7 @@ Builds and pushes a versioned image to GHCR, signs it with [cosign](https://gith
 
 **Triggers:** weekly schedule (Mondays 04:00 UTC) and `workflow_dispatch`
 
-Uses `skopeo copy --all` to copy all 19 Greenbone Community Edition images from `registry.community.greenbone.net/community/` to `ghcr.io/cybersecauto-labs/greenbone/`, preserving multi-arch manifests.
+Uses `skopeo copy --all` to copy all 19 [Greenbone Community Edition](https://greenbone.github.io/docs/latest/22.4/container/index.html#download) images from `registry.community.greenbone.net/community/` to `ghcr.io/cybersecauto-labs/greenbone/`, preserving multi-arch manifests.
 
 **Guarantees:** the GHCR mirror stays reasonably fresh without manual intervention.
 

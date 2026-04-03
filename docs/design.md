@@ -56,7 +56,7 @@ CIDR enforcement happens at `create_target` time, where hosts are explicitly def
 
 ## Configuration & deployment
 
-- **Hardcoded default UUIDs.** The default scan config and scanner UUIDs are hardcoded constants matching a standard Greenbone Community Edition install. Non-standard deployments must pass explicit UUIDs.
+- **Hardcoded default UUIDs.** The default scan config and scanner UUIDs are hardcoded constants matching a standard [Greenbone Community Edition](https://greenbone.github.io/docs/latest/22.4/container/index.html#download) install. Non-standard deployments must pass explicit UUIDs.
 
 - **Single GVM instance.** The server connects to one GVM instance, configured at startup. Multi-instance routing is not supported.
 
