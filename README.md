@@ -36,22 +36,31 @@ cd OpenVAS-MCP
 python3.11 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-GVM_PASSWORD=secret python -m openvas_mcp
 ```
 
-For any MCP client that supports stdio (Claude Desktop, Cursor, Windsurf, Cline, Continue, Zed, …), add to `mcpServers` in your config:
+For any MCP client that supports stdio (Claude Desktop, Cursor, Windsurf, Cline, Continue, Zed, …), add to `mcpServers` in your config file:
 
 ```json
 {
   "mcpServers": {
     "openvas": {
-      "command": "/path/to/.venv/bin/python",
+      "command": "/path/to/.venv/bin/python",  // ← edit this to your venv path
       "args": ["-m", "openvas_mcp"],
-      "env": { "GVM_PASSWORD": "secret" }
+      "env": { "GVM_PASSWORD": "secret" }  // ← edit this to your GVM password
     }
   }
 }
 ```
+
+Config file locations:
+
+| Client | Path |
+|---|---|
+| Claude Desktop (macOS) | `~/Library/Application Support/Claude/claude_desktop_config.json` |
+| Claude Desktop (Windows) | `%APPDATA%\Claude\claude_desktop_config.json` |
+| Cursor | `~/.cursor/mcp.json` |
+| Windsurf | `~/.codeium/windsurf/mcp_config.json` |
+| Cline / Roo Code | via the MCP panel in the VS Code extension |
 
 ### Networked deployment (SSE)
 
@@ -88,7 +97,20 @@ cd OpenVAS-MCP
 GVM_PASSWORD=secret docker compose up --build
 ```
 
-The server listens on `127.0.0.1:8000` using SSE transport.
+The server listens on `127.0.0.1:8000` using SSE transport. Point your MCP client at it:
+
+```json
+{
+  "mcpServers": {
+    "openvas": {
+      "url": "http://your-server:8000/sse",  // ← edit this to your server address
+      "headers": {
+        "Authorization": "Bearer supersecrettoken"  // ← your MCP_API_KEYS token
+      }
+    }
+  }
+}
+```
 
 By default the HTTP server requires an API key. Set one with `MCP_API_KEYS`, or opt out explicitly for trusted networks:
 
@@ -112,7 +134,7 @@ docker compose -f docker/openvas/compose.yaml up -d
 GVM_PASSWORD=secret docker compose -f compose.yaml -f compose.override.yaml up
 ```
 
-See [`compose.override.yaml`](compose.override.yaml) for how the socket volume is mounted.
+See [`compose.override.yaml`](compose.override.yaml) for how the socket volume is mounted. The MCP server listens on `127.0.0.1:8000` — connect your client the same way as above.
 
 > **Note:** Plain TCP connections (`GVM_HOST` set, `GVM_TLS` unset) send GVM credentials unencrypted. Use `GVM_TLS=1` or a Unix socket for anything beyond local dev.
 
