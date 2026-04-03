@@ -1,10 +1,52 @@
-# CI override: pull openvas-scanner:stable as linux/arm64 and run under QEMU.
-# The amd64 registry blobs for this image are unservable from CI runner IPs;
-# the arm64 layers pull cleanly and run correctly under QEMU emulation.
+# CI override: pull Greenbone Community Edition images from the GHCR mirror
+# instead of registry.community.greenbone.net, which drops connections
+# mid-transfer for large blobs from GitHub Actions runner IPs.
+#
+# The mirror is kept fresh by the mirror-greenbone-images workflow.
+# Run that workflow manually after a new Greenbone stable release.
+#
+# gvmd-socket-proxy uses alpine/socat from Docker Hub — excluded, it pulls
+# reliably without mirroring.
 services:
+  vulnerability-tests:
+    image: ghcr.io/cybersecauto-labs/greenbone/vulnerability-tests:latest
+  notus-data:
+    image: ghcr.io/cybersecauto-labs/greenbone/notus-data:latest
+  scap-data:
+    image: ghcr.io/cybersecauto-labs/greenbone/scap-data:latest
+  cert-bund-data:
+    image: ghcr.io/cybersecauto-labs/greenbone/cert-bund-data:latest
+  dfn-cert-data:
+    image: ghcr.io/cybersecauto-labs/greenbone/dfn-cert-data:latest
+  data-objects:
+    image: ghcr.io/cybersecauto-labs/greenbone/data-objects:latest
+  report-formats:
+    image: ghcr.io/cybersecauto-labs/greenbone/report-formats:latest
+  gpg-data:
+    image: ghcr.io/cybersecauto-labs/greenbone/gpg-data:latest
+  redis-server:
+    image: ghcr.io/cybersecauto-labs/greenbone/redis-server:latest
+  pg-gvm:
+    image: ghcr.io/cybersecauto-labs/greenbone/pg-gvm:stable
+  pg-gvm-migrator:
+    image: ghcr.io/cybersecauto-labs/greenbone/pg-gvm-migrator:stable
+  gvmd:
+    image: ghcr.io/cybersecauto-labs/greenbone/gvmd:stable
+  gsa:
+    image: ghcr.io/cybersecauto-labs/greenbone/gsa:stable-slim
+  gsad:
+    image: ghcr.io/cybersecauto-labs/greenbone/gsad:stable
+  gvm-config:
+    image: ghcr.io/cybersecauto-labs/greenbone/gvm-config:latest
+  nginx:
+    image: ghcr.io/cybersecauto-labs/greenbone/nginx:latest
   configure-openvas:
-    platform: linux/arm64
+    image: ghcr.io/cybersecauto-labs/greenbone/openvas-scanner:stable
   openvas:
-    platform: linux/arm64
+    image: ghcr.io/cybersecauto-labs/greenbone/openvas-scanner:stable
   openvasd:
-    platform: linux/arm64
+    image: ghcr.io/cybersecauto-labs/greenbone/openvas-scanner:stable
+  ospd-openvas:
+    image: ghcr.io/cybersecauto-labs/greenbone/ospd-openvas:stable
+  gvm-tools:
+    image: ghcr.io/cybersecauto-labs/greenbone/gvm-tools:latest
