@@ -26,12 +26,14 @@ Stands up the full Greenbone Community Edition stack via Docker Compose, sets a 
 
 **Guarantees:** GMP authentication, session management, and the full tool call path work against a real scanner before anything reaches `main`.
 
-**Tradeoffs and known constraints:**
+> [!NOTE]
+> Integration tests only run on `main`-targeting branches. The full Greenbone stack is heavy (~30 container images). Fast feedback on feature branches comes from the unit tests in `ci.yml`.
+
+**Known constraints:**
 
 - **GHCR mirror** — Greenbone's registry (`registry.community.greenbone.net`) drops connections mid-transfer for large blobs from GitHub Actions runner IPs. All 19 Greenbone images are mirrored to `ghcr.io/cybersecauto-labs/greenbone/` and pulled from there instead. The mirror is kept fresh by the `mirror-greenbone-images.yml` workflow.
 - **QEMU emulation** — seven images (`gvmd`, `pg-gvm`, `pg-gvm-migrator`, `openvas-scanner`, `gsad`, `gvm-config`, `gvm-tools`) were initially mirrored from a Mac (arm64) and are therefore arm64-only in GHCR. The workflow registers QEMU via `docker/setup-qemu-action` so the amd64 CI runner can execute them transparently. This adds startup latency; the gvmd socket wait is set to 20 minutes to absorb it.
-- **Auth secret** — the GHCR packages are private (they were pushed locally and are not linked to this repository, so `GITHUB_TOKEN` cannot read them automatically). A `GHCR_READ_PAT` repo secret holds a personal access token with `read:packages` scope. The long-term fix is to make the packages public so no PAT is needed.
-- **Only on `main`-targeting branches** — the full Greenbone stack is heavy (~30 container images). Running it on every feature branch push would burn minutes for no signal. Fast feedback comes from the unit tests in `ci.yml`.
+- **Auth secret** — the GHCR packages are private (pushed locally, not linked to this repository, so `GITHUB_TOKEN` cannot read them automatically). A `GHCR_READ_PAT` repo secret holds a PAT with `read:packages` scope. The long-term fix is to make the packages public or run the mirror workflow from `main` so packages get linked to the repo and `GITHUB_TOKEN` works automatically.
 
 ---
 
@@ -53,7 +55,8 @@ Builds the image and runs the server inside a `--network=none` Docker container 
 
 **Guarantees:** the server and its dependencies make no unexpected outbound connections on startup — the "local-first, no telemetry" claim is verified on every push, not just stated in the README.
 
-**Tradeoffs:** the audit catches connections that produce output or fail loudly. A dependency that phones home silently (no log output, fire-and-forget) would pass. A full socket-level audit (e.g. `strace` or `tcpdump` inside the container) would be more thorough but is not implemented. This is tracked as a known limitation in [`docs/design.md`](design.md).
+> [!NOTE]
+> The audit catches connections that produce output or fail loudly. A dependency that phones home silently (no log output, fire-and-forget) would pass. A full socket-level audit (e.g. `strace` or `tcpdump` inside the container) would be more thorough but is not yet implemented. This is tracked as a known limitation in [design.md](design.md).
 
 ---
 
@@ -65,7 +68,8 @@ Builds and pushes a versioned image to GHCR, signs it with [cosign](https://gith
 
 **Guarantees:** every published image has a verifiable provenance chain (OIDC-signed by the Actions workflow identity, not a long-lived key), a bill of materials, and has passed a vulnerability scan at build time.
 
-**Tradeoffs:** grype scans the SBOM at release time, not continuously. A CVE disclosed after a release will not re-trigger the scan. Dependabot handles dependency updates that feed into future releases.
+> [!NOTE]
+> grype scans the SBOM at release time, not continuously. A CVE disclosed after a release will not re-trigger the scan. Dependabot handles dependency updates that feed into future releases.
 
 ---
 
@@ -77,4 +81,5 @@ Uses `skopeo copy --all` to copy all 19 Greenbone Community Edition images from 
 
 **Guarantees:** the GHCR mirror stays reasonably fresh without manual intervention.
 
-**Tradeoffs:** the weekly cadence means CI can run on images up to seven days old. Images are refreshed automatically after each new Greenbone stable release via the Monday schedule.
+> [!NOTE]
+> The weekly cadence means CI can run on images up to seven days old. Images are refreshed automatically after each new Greenbone stable release via the Monday schedule.
