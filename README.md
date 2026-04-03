@@ -151,7 +151,8 @@ Every release image is:
 
 ## Notes
 
-See [docs/design.md](docs/design.md) for design decisions and known limitations.
+- See [docs/design.md](docs/design.md) for design decisions and known limitations.
+- See [docs/ci.md](docs/ci.md) for a description of each CI workflow, the guarantees it provides, and the tradeoffs made.
 
 ## License
 
