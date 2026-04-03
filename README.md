@@ -67,9 +67,9 @@ MCP_API_KEYS="supersecrettoken:my-agent" GVM_PASSWORD=secret docker compose up
 MCP_API_KEYS="supersecrettoken:my-agent" GVM_HOST=192.168.1.10 GVM_PASSWORD=secret docker compose up
 ```
 
-`MCP_API_KEYS` is a comma-separated list of `token:name` pairs. The `token` is the secret your MCP client will send as a Bearer token; the `name` is a label used in logs and policy lookups. Multiple clients: `"tok1:agent1,tok2:agent2"`.
+- `MCP_API_KEYS` is a comma-separated list of `token:name` pairs. The `token` is the secret your MCP client will send as a Bearer token; the `name` is a label used in logs and policy lookups. Multiple clients: `"tok1:agent1,tok2:agent2"`.
 
-Pass `MCP_ALLOW_UNAUTHENTICATED=1` instead of `MCP_API_KEYS` if you want to skip auth on a trusted network.
+- Pass `MCP_ALLOW_UNAUTHENTICATED=1` instead of `MCP_API_KEYS` if you want to skip auth on a trusted network.
 
 This pulls `ghcr.io/cybersecauto-labs/openvas-mcp:<version>` — a pinned, signed image. To verify the signature before running:
 
