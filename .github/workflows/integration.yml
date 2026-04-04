@@ -74,7 +74,7 @@ jobs:
 
       - name: Verify GMP authentication
         run: |
-          timeout 60 bash -c '
+          timeout 300 bash -c '
             until GVM_HOST=127.0.0.1 GVM_PORT=9393 GVM_PASSWORD=cipassword123 python -c "
           from openvas_mcp.gvm_client import gmp_session
           with gmp_session(): pass
