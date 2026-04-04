@@ -8,6 +8,7 @@ Run with:
 from __future__ import annotations
 
 import os
+import time
 
 import pytest
 
@@ -19,6 +20,13 @@ def require_gvm_integration():
     """Skip all integration tests unless GVM_INTEGRATION=1 is set."""
     if os.environ.get("GVM_INTEGRATION") != "1":
         pytest.skip("Set GVM_INTEGRATION=1 to run integration tests")
+
+
+@pytest.fixture(autouse=True)
+def gvmd_cooldown():
+    """Pause between tests — gvmd under QEMU emulation needs time to recover between connections."""
+    yield
+    time.sleep(2)
 
 
 @pytest.fixture
