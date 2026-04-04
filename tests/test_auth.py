@@ -9,6 +9,7 @@ from openvas_mcp.auth import (
     AuthMiddleware,
     ClientIdentity,
     _client_ctx,
+    _RateLimiter,
     get_current_client,
 )
 
@@ -124,3 +125,68 @@ class TestAuthMiddleware:
         assert store.validate("abc124") is None
         assert store.validate("") is None
         assert store.validate("abc123extra") is None
+
+
+class TestRateLimiter:
+    def test_not_blocked_initially(self):
+        limiter = _RateLimiter(max_attempts=3, window=60.0)
+        assert not limiter.is_blocked("1.2.3.4")
+
+    def test_blocked_after_max_failures(self):
+        limiter = _RateLimiter(max_attempts=3, window=60.0)
+        for _ in range(3):
+            limiter.record_failure("1.2.3.4")
+        assert limiter.is_blocked("1.2.3.4")
+
+    def test_not_blocked_below_max_failures(self):
+        limiter = _RateLimiter(max_attempts=3, window=60.0)
+        limiter.record_failure("1.2.3.4")
+        limiter.record_failure("1.2.3.4")
+        assert not limiter.is_blocked("1.2.3.4")
+
+    def test_success_clears_failures(self):
+        limiter = _RateLimiter(max_attempts=3, window=60.0)
+        for _ in range(3):
+            limiter.record_failure("1.2.3.4")
+        assert limiter.is_blocked("1.2.3.4")
+        limiter.record_success("1.2.3.4")
+        assert not limiter.is_blocked("1.2.3.4")
+
+    def test_failures_expire_after_window(self):
+        import time
+
+        limiter = _RateLimiter(max_attempts=3, window=0.05)
+        for _ in range(3):
+            limiter.record_failure("1.2.3.4")
+        assert limiter.is_blocked("1.2.3.4")
+        time.sleep(0.1)
+        assert not limiter.is_blocked("1.2.3.4")
+
+    def test_independent_tracking_per_ip(self):
+        limiter = _RateLimiter(max_attempts=3, window=60.0)
+        for _ in range(3):
+            limiter.record_failure("1.2.3.4")
+        assert limiter.is_blocked("1.2.3.4")
+        assert not limiter.is_blocked("5.6.7.8")
+
+    def test_oldest_ip_evicted_when_cap_reached(self):
+        limiter = _RateLimiter(max_attempts=3, window=60.0, max_ips=2)
+        limiter.record_failure("1.1.1.1")
+        limiter.record_failure("2.2.2.2")
+        # Adding a third IP should evict the oldest (1.1.1.1)
+        limiter.record_failure("3.3.3.3")
+        assert "1.1.1.1" not in limiter._failures
+        assert "2.2.2.2" in limiter._failures
+        assert "3.3.3.3" in limiter._failures
+
+    def test_middleware_returns_429_after_max_failures(self):
+        app = AuthMiddleware(_make_echo_app(), key_store=APIKeyStore("tok1:alice"))
+        # Exhaust the default limit via the middleware directly
+        app._limiter = _RateLimiter(max_attempts=3, window=60.0)
+        client = TestClient(app, raise_server_exceptions=False)
+        for _ in range(3):
+            client.get("/path")  # no auth header → record_failure
+        response = client.get("/path")
+        assert response.status_code == 429
+        assert response.json()["code"] == "rate_limited"
+        assert "Retry-After" in response.headers

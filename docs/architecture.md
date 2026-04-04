@@ -45,7 +45,8 @@ openvas_mcp/
 5. The tool handler calls `get_current_client()` to retrieve the identity, then `get_policy().is_tool_allowed()` to enforce the policy; denied calls return `{"error": true, "code": "forbidden", ...}`
 6. Remaining steps are the same as the stdio flow (input validation → GMP call → XML parse → return)
 
-On any error (connection failure, GMP error, validation failure, policy violation), the tool returns a structured error dict — `{"error": true, "code": "...", "message": "..."}` — rather than raising an exception into the MCP framework.
+> [!NOTE]
+> On any error (connection failure, GMP error, validation failure, policy violation), the tool returns a structured error dict — `{"error": true, "code": "...", "message": "..."}` — rather than raising an exception into the MCP framework.
 
 ## Transport modes
 
@@ -60,8 +61,11 @@ On any error (connection failure, GMP error, validation failure, policy violatio
 | Mode | When | Config |
 |---|---|---|
 | Unix socket | Default | `GVM_SOCKET_PATH` (default `/run/gvmd/gvmd.sock`) |
-| Plain TCP | `GVM_HOST` set, `GVM_TLS` not set | `GVM_HOST`, `GVM_PORT` |
-| TLS | `GVM_HOST` + `GVM_TLS=1` | `GVM_HOST`, `GVM_PORT` |
+| Plain TCP | `GVM_HOST` set, `GVM_TLS` not set | `GVM_HOST`, `GVM_PORT` — IPv4 and IPv6 supported |
+| TLS | `GVM_HOST` + `GVM_TLS=1` | `GVM_HOST`, `GVM_PORT`, optional `GVM_TLS_CAFILE` for self-signed certs — IPv4 and IPv6 supported |
+
+> [!WARNING]
+> Plain TCP connections send GVM credentials unencrypted. Use `GVM_TLS=1` or a Unix socket for anything beyond local dev.
 
 ## Authentication and authorization model
 
@@ -69,17 +73,33 @@ On any error (connection failure, GMP error, validation failure, policy violatio
 
 `AuthMiddleware` is a pure ASGI middleware (not `BaseHTTPMiddleware`) wrapping the FastMCP Starlette app for HTTP transports. It validates the Bearer token against the `APIKeyStore` loaded from `MCP_API_KEYS` and stores the `ClientIdentity` in a `contextvars.ContextVar`. This makes the identity available to all tool handlers without threading through function parameters.
 
-If `MCP_API_KEYS` is not set, the middleware is not installed and all HTTP requests are accepted — intended for development only.
+If `MCP_API_KEYS` is not set, the middleware is not installed and all HTTP requests are accepted — intended for development only. Set `MCP_ALLOW_UNAUTHENTICATED=1` to acknowledge this explicitly; omitting it when no keys are configured causes startup to fail.
+
+> [!NOTE]
+> When `MCP_ALLOW_UNAUTHENTICATED=1` is set alongside `MCP_POLICY_FILE`, a startup warning is emitted. All requests arrive with no client identity and are evaluated against the `default` policy block; named `clients:` entries are never matched.
 
 ### Policy enforcement
 
 A `Policy` object is loaded from `MCP_POLICY_FILE` at startup and installed as a module-level singleton via `set_policy()`. Tool handlers call `get_policy()` to enforce:
 
 - **Tool-level allow/deny** — each client has an `allowed_tools` list (`["*"]` for all)
-- **CIDR target restriction** — `create_target` validates every host/CIDR in the request against the client's `allowed_cidrs`; hostnames are denied when CIDR rules are configured
-- **Concurrent scan limit** — `start_scan` counts active tasks before creating a new one when `max_concurrent_scans > 0`
+- **CIDR target restriction** — `create_target` validates every host/CIDR in the request against the client's `allowed_cidrs`; non-CIDR entries are treated as fnmatch hostname patterns (e.g. `*.internal`, `db.prod`)
+- **Concurrent scan limit** — `start_scan` counts active tasks before creating a new one when `max_concurrent_scans > 0`; this count is GVM-global, not per-client — scans started outside of MCP (e.g. via the GVM UI) consume the same capacity
 
-Clients not listed in the policy fall back to the `default` block. If no policy file is configured, the default policy permits everything.
+Clients not listed in the policy fall back to the `default` block. If `MCP_POLICY_FILE` is unset, the default policy permits everything. If it is set but the file is missing, startup fails with an error.
+
+## Release integrity
+
+Every image published to `ghcr.io/cybersecauto-labs/openvas-mcp` goes through the following before it reaches users:
+
+1. **Lint, type checking, and unit tests** pass on Python 3.10, 3.11, and 3.12 (`ci.yml`)
+2. **Integration tests** against a live Greenbone Community Edition stack verify real GMP operations (`integration.yml`) — gated on PRs targeting `main`
+3. **Telemetry audit** runs the server in a `--network=none` Docker container, asserting no unexpected outbound connections at startup or idle (`telemetry-audit.yml`)
+4. **Image signed** with [cosign](https://github.com/sigstore/cosign) keyless OIDC signing — the signature is stored in GHCR alongside the image and can be verified without trusting a managed key (`release.yml`)
+5. **[CycloneDX](https://cyclonedx.org) SBOM** generated by `syft` from the published image digest and attached to the GitHub Release
+6. **Vulnerability scan** — `grype` scans the SBOM and fails the release on `high` severity findings
+
+See [ci.md](ci.md) for per-workflow details.
 
 ## Logging and audit
 

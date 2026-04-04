@@ -102,9 +102,9 @@ class TestLoadPolicy:
         assert p.is_tool_allowed("any_tool") is True
         assert p.is_host_allowed("1.2.3.4") is True
 
-    def test_missing_file_returns_permissive_policy(self):
-        p = load_policy(str(FIXTURES / "nonexistent.yaml"))
-        assert p.is_tool_allowed("any_tool") is True
+    def test_missing_file_raises(self):
+        with pytest.raises(ValueError, match="Policy file not found"):
+            load_policy(str(FIXTURES / "nonexistent.yaml"))
 
     def test_loads_clients_from_yaml(self):
         p = load_policy(str(FIXTURES / "policy_clients.yaml"))

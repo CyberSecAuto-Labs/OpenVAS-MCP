@@ -22,6 +22,21 @@ logger = logging.getLogger(__name__)
 
 mcp = FastMCP("openvas", host=cfg.mcp_host, port=cfg.mcp_port)
 
+KNOWN_TOOLS: frozenset[str] = frozenset(
+    {
+        "create_target",
+        "start_scan",
+        "get_scan_status",
+        "fetch_scan_results",
+        "list_targets",
+        "list_tasks",
+    }
+)
+
+# Serialises the check-and-start sequence in start_scan to prevent a TOCTOU
+# race where concurrent callers all observe active < max_scans and all proceed.
+_scan_start_lock = asyncio.Lock()
+
 
 @mcp.custom_route("/health", methods=["GET"])
 async def health_check(request: Request) -> Response:  # pragma: no cover
@@ -71,6 +86,11 @@ def _err(code: str, message: str) -> dict[str, Any]:
     return {"error": True, "code": code, "message": message}
 
 
+def _sanitize_os_error(e: OSError) -> str:
+    """Return a generic connection error message, omitting socket paths and fs details."""
+    return f"Could not connect to GVM: [{e.errno}] {e.strerror}"
+
+
 def _validate_uuid(value: str, field_name: str) -> dict[str, Any] | None:
     """Return an error dict if value is not a valid UUID, else None."""
     if not _UUID_RE.match(value):
@@ -83,6 +103,8 @@ def _validate_name(value: str, field_name: str = "name") -> dict[str, Any] | Non
         return _err("validation_error", f"{field_name} must not be empty")
     if len(value) > 255:
         return _err("validation_error", f"{field_name} must be 255 characters or fewer")
+    if any(ord(c) < 0x20 or ord(c) == 0x7F for c in value):
+        return _err("validation_error", f"{field_name} must not contain control characters")
     return None
 
 
@@ -92,7 +114,7 @@ def _validate_name(value: str, field_name: str = "name") -> dict[str, Any] | Non
 
 
 @mcp.tool()
-def list_targets() -> list[dict[str, Any]] | dict[str, Any]:
+async def list_targets() -> list[dict[str, Any]] | dict[str, Any]:
     """Return all scan targets defined in OpenVAS."""
     identity = get_current_client()
     if not get_policy().is_tool_allowed("list_targets", identity):
@@ -108,9 +130,13 @@ def list_targets() -> list[dict[str, Any]] | dict[str, Any]:
         "tool invoked",
         extra={"tool": "list_targets", "client_id": identity.client_id if identity else "stdio"},
     )
-    try:
+
+    def _call():
         with gmp_session() as gmp:
-            response = gmp.get_targets()
+            return gmp.get_targets()
+
+    try:
+        response = await asyncio.to_thread(_call)
     except GvmResponseError as e:
         logger.error("GMP response error", extra={"tool": "list_targets", "error": str(e)})
         return _err("gvm_response_error", str(e))
@@ -122,7 +148,7 @@ def list_targets() -> list[dict[str, Any]] | dict[str, Any]:
         return _err("gvm_error", str(e))
     except OSError as e:
         logger.error("connection error", extra={"tool": "list_targets", "error": str(e)})
-        return _err("connection_error", f"Could not connect to GVM: {e}")
+        return _err("connection_error", _sanitize_os_error(e))
     result = [_target_to_dict(t) for t in response.findall("target")]
     logger.info(
         "tool completed",
@@ -137,7 +163,7 @@ def list_targets() -> list[dict[str, Any]] | dict[str, Any]:
 
 
 @mcp.tool()
-def create_target(name: str, hosts: str, port_list_id: str = "") -> dict[str, Any]:
+async def create_target(name: str, hosts: str, port_list_id: str = "") -> dict[str, Any]:
     """Create a scan target.
 
     Args:
@@ -155,14 +181,6 @@ def create_target(name: str, hosts: str, port_list_id: str = "") -> dict[str, An
             },
         )
         return _err("forbidden", "Operation not permitted")
-    logger.info(
-        "tool invoked",
-        extra={
-            "tool": "create_target",
-            "params": {"name": name, "hosts": hosts},
-            "client_id": identity.client_id if identity else "stdio",
-        },
-    )
     if err := _validate_name(name):
         return err
     if not hosts.strip():
@@ -171,6 +189,14 @@ def create_target(name: str, hosts: str, port_list_id: str = "") -> dict[str, An
         return err
 
     host_list = [h.strip() for h in hosts.split(",") if h.strip()]
+    logger.info(
+        "tool invoked",
+        extra={
+            "tool": "create_target",
+            "params": {"name": name, "host_count": len(host_list)},
+            "client_id": identity.client_id if identity else "stdio",
+        },
+    )
     policy = get_policy()
     denied_hosts = [h for h in host_list if not policy.is_host_allowed(h, identity)]
     if denied_hosts:
@@ -190,9 +216,13 @@ def create_target(name: str, hosts: str, port_list_id: str = "") -> dict[str, An
         "hosts": host_list,
         "port_list_id": port_list_id or ALL_TCP_NMAP_TOP100_UDP,
     }
-    try:
+
+    def _call():
         with gmp_session() as gmp:
-            response = gmp.create_target(**kwargs)
+            return gmp.create_target(**kwargs)
+
+    try:
+        response = await asyncio.to_thread(_call)
     except GvmResponseError as e:
         logger.error("GMP response error", extra={"tool": "create_target", "error": str(e)})
         return _err("gvm_response_error", str(e))
@@ -204,7 +234,7 @@ def create_target(name: str, hosts: str, port_list_id: str = "") -> dict[str, An
         return _err("gvm_error", str(e))
     except OSError as e:
         logger.error("connection error", extra={"tool": "create_target", "error": str(e)})
-        return _err("connection_error", f"Could not connect to GVM: {e}")
+        return _err("connection_error", _sanitize_os_error(e))
     result = {
         "id": response.get("id", ""),
         "status": response.get("status", ""),
@@ -222,7 +252,7 @@ def create_target(name: str, hosts: str, port_list_id: str = "") -> dict[str, An
 
 
 @mcp.tool()
-def list_tasks() -> list[dict[str, Any]] | dict[str, Any]:
+async def list_tasks() -> list[dict[str, Any]] | dict[str, Any]:
     """Return all scan tasks (active and historical)."""
     identity = get_current_client()
     if not get_policy().is_tool_allowed("list_tasks", identity):
@@ -235,9 +265,13 @@ def list_tasks() -> list[dict[str, Any]] | dict[str, Any]:
         "tool invoked",
         extra={"tool": "list_tasks", "client_id": identity.client_id if identity else "stdio"},
     )
-    try:
+
+    def _call():
         with gmp_session() as gmp:
-            response = gmp.get_tasks()
+            return gmp.get_tasks()
+
+    try:
+        response = await asyncio.to_thread(_call)
     except GvmResponseError as e:
         logger.error("GMP response error", extra={"tool": "list_tasks", "error": str(e)})
         return _err("gvm_response_error", str(e))
@@ -249,7 +283,7 @@ def list_tasks() -> list[dict[str, Any]] | dict[str, Any]:
         return _err("gvm_error", str(e))
     except OSError as e:
         logger.error("connection error", extra={"tool": "list_tasks", "error": str(e)})
-        return _err("connection_error", f"Could not connect to GVM: {e}")
+        return _err("connection_error", _sanitize_os_error(e))
     result = [_task_to_dict(t) for t in response.findall("task")]
     logger.info(
         "tool completed",
@@ -264,7 +298,7 @@ def list_tasks() -> list[dict[str, Any]] | dict[str, Any]:
 
 
 @mcp.tool()
-def start_scan(
+async def start_scan(
     name: str,
     target_id: str,
     scanner_id: str = "",
@@ -305,7 +339,7 @@ def start_scan(
     FULL_AND_FAST = "daba56c8-73ec-11df-a475-002264764cea"
     DEFAULT_SCANNER = "08b69003-5fc2-4037-a479-93b440211c73"
 
-    try:
+    def _check_and_start():
         with gmp_session() as gmp:
             max_scans = get_policy().max_concurrent_scans(identity)
             if max_scans > 0:
@@ -314,22 +348,28 @@ def start_scan(
                 if active >= max_scans:
                     logger.warning(
                         "concurrent scan limit reached",
-                        extra={
-                            "tool": "start_scan",
-                            "limit": max_scans,
-                            "client_id": identity.client_id if identity else "stdio",
-                        },
+                        extra={"tool": "start_scan", "limit": max_scans},
                     )
-                    return _err("rate_limited", f"Maximum concurrent scans ({max_scans}) reached")
-
+                    return None, _err(
+                        "rate_limited",
+                        f"Maximum concurrent scans ({max_scans}) reached "
+                        f"(this is a GVM-global count, not limited to this MCP session)",
+                    )
             task = gmp.create_task(
                 name=name,
                 config_id=scan_config_id or FULL_AND_FAST,
                 target_id=target_id,
                 scanner_id=scanner_id or DEFAULT_SCANNER,
             )
-            task_id = task.get("id", "")
-            gmp.start_task(task_id)
+            tid = task.get("id", "")
+            if not tid:
+                return None, _err("gvm_error", "GVM returned no task ID after create_task")
+            gmp.start_task(tid)
+            return tid, None
+
+    try:
+        async with _scan_start_lock:
+            task_id, err = await asyncio.to_thread(_check_and_start)
     except GvmResponseError as e:
         logger.error("GMP response error", extra={"tool": "start_scan", "error": str(e)})
         return _err("gvm_response_error", str(e))
@@ -341,7 +381,10 @@ def start_scan(
         return _err("gvm_error", str(e))
     except OSError as e:
         logger.error("connection error", extra={"tool": "start_scan", "error": str(e)})
-        return _err("connection_error", f"Could not connect to GVM: {e}")
+        return _err("connection_error", _sanitize_os_error(e))
+
+    if err:
+        return err
 
     result = {"task_id": task_id, "status": "started"}
     logger.info(
@@ -386,7 +429,24 @@ async def get_scan_status(task_id: str, ctx: Context) -> dict[str, Any]:
     TERMINAL_STATES = {"Done", "Stopped", "Error"}
     POLL_INTERVAL = 10  # seconds
 
+    deadline = asyncio.get_running_loop().time() + cfg.scan_poll_timeout
+
     while True:
+        if asyncio.get_running_loop().time() >= deadline:
+            logger.warning(
+                "scan poll timeout reached",
+                extra={
+                    "tool": "get_scan_status",
+                    "timeout": cfg.scan_poll_timeout,
+                    "task_id": task_id,
+                    "client_id": identity.client_id if identity else "stdio",
+                },
+            )
+            return _err(
+                "timeout",
+                f"Scan did not complete within {cfg.scan_poll_timeout}s; "
+                "use get_scan_status again to continue monitoring",
+            )
 
         def _fetch():
             with gmp_session() as gmp:
@@ -394,7 +454,12 @@ async def get_scan_status(task_id: str, ctx: Context) -> dict[str, Any]:
 
         try:
             response = await asyncio.to_thread(_fetch)
-        except (GvmError, OSError) as e:
+        except OSError as e:
+            logger.error(
+                "error polling scan status", extra={"tool": "get_scan_status", "error": str(e)}
+            )
+            return _err("connection_error", _sanitize_os_error(e))
+        except GvmError as e:
             logger.error(
                 "error polling scan status", extra={"tool": "get_scan_status", "error": str(e)}
             )
@@ -430,7 +495,7 @@ async def get_scan_status(task_id: str, ctx: Context) -> dict[str, Any]:
 
 
 @mcp.tool()
-def fetch_scan_results(
+async def fetch_scan_results(
     task_id: str, min_severity: float = 0.0
 ) -> list[dict[str, Any]] | dict[str, Any]:
     """Retrieve vulnerability findings from the most recent report of a scan task.
@@ -464,25 +529,25 @@ def fetch_scan_results(
             "validation_error", f"min_severity must be between 0.0 and 10.0, got {min_severity}"
         )
 
-    try:
+    def _call():
         with gmp_session() as gmp:
             task_resp = gmp.get_task(task_id)
-            task = task_resp.find("task")
-            if task is None:
-                return _err("not_found", f"Task {task_id} not found")
-
-            last_report = task.find("last_report/report")
+            task_elem = task_resp.find("task")
+            if task_elem is None:
+                return None, None
+            last_report = task_elem.find("last_report/report")
             report_id = last_report.get("id", "") if last_report is not None else ""
-
             if not report_id:
-                return _err("not_found", "No completed report found for this task")
-
-            report_resp = gmp.get_report(
+                return task_elem, None
+            return task_elem, gmp.get_report(
                 report_id,
                 filter_string=f"severity>{min_severity - 0.001:.3f}",
                 ignore_pagination=True,
                 details=True,
             )
+
+    try:
+        task_elem, report_resp = await asyncio.to_thread(_call)
     except GvmResponseError as e:
         logger.error("GMP response error", extra={"tool": "fetch_scan_results", "error": str(e)})
         return _err("gvm_response_error", str(e))
@@ -494,7 +559,12 @@ def fetch_scan_results(
         return _err("gvm_error", str(e))
     except OSError as e:
         logger.error("connection error", extra={"tool": "fetch_scan_results", "error": str(e)})
-        return _err("connection_error", f"Could not connect to GVM: {e}")
+        return _err("connection_error", _sanitize_os_error(e))
+
+    if task_elem is None:
+        return _err("not_found", f"Task {task_id} not found")
+    if report_resp is None:
+        return _err("not_found", "No completed report found for this task")
 
     results = []
     for result in report_resp.findall(".//result"):
@@ -511,7 +581,7 @@ def fetch_scan_results(
             {
                 "id": result.get("id", ""),
                 "name": _elem_text(result, "name"),
-                "host": result.findtext("host") or "",
+                "host": result.findtext("host/ip") or result.findtext("host") or "",
                 "port": result.findtext("port") or "",
                 "severity": severity,
                 "threat": _elem_text(result, "threat"),
@@ -521,13 +591,30 @@ def fetch_scan_results(
         )
 
     results.sort(key=lambda r: r["severity"], reverse=True)
+
+    cap = cfg.report_max_results  # 0 means unlimited; only applied when > 0
+    truncated = cap > 0 and len(results) > cap
+    if truncated:
+        results = results[:cap]
+        logger.warning(
+            "report results truncated",
+            extra={
+                "tool": "fetch_scan_results",
+                "cap": cap,
+                "client_id": identity.client_id if identity else "stdio",
+            },
+        )
+
     logger.info(
         "tool completed",
         extra={
             "tool": "fetch_scan_results",
             "status": "ok",
             "count": len(results),
+            "truncated": truncated,
             "client_id": identity.client_id if identity else "stdio",
         },
     )
+    if truncated:
+        return {"results": results, "truncated": True, "cap": cap}
     return results

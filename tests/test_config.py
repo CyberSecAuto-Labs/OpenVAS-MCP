@@ -161,7 +161,7 @@ def test_mcp_policy_file_default(monkeypatch):
     from openvas_mcp.config import Config
 
     cfg = Config.from_env()
-    assert cfg.mcp_policy_file == "examples/policy.yaml"
+    assert cfg.mcp_policy_file == ""
 
 
 def test_mcp_policy_file_custom(monkeypatch, tmp_path):

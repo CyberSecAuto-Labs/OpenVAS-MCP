@@ -1,0 +1,53 @@
+name: Telemetry audit
+
+on:
+  push:
+    branches: ["develop", "main"]
+  pull_request:
+    branches: ["develop", "main"]
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  telemetry-audit:
+    name: Telemetry audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build image for audit
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          tags: openvas-mcp:ci-audit
+          cache-from: type=gha
+
+      - name: Verify no unexpected outbound connections
+        # --network=none: completely isolated — any external TCP/DNS attempt fails
+        # immediately with ENETUNREACH. The only expected failure is the GVM
+        # connection (no gvmd available in this context). If the mcp library or
+        # any dependency phones home, it would fail here and appear in the logs.
+        run: |
+          timeout 20 docker run --rm \
+            --network=none \
+            -e GVM_PASSWORD=audit-test \
+            -e GVM_HOST=localhost \
+            -e MCP_TRANSPORT=sse \
+            -e MCP_ALLOW_UNAUTHENTICATED=1 \
+            openvas-mcp:ci-audit 2>&1 | tee /tmp/audit.txt || true
+
+          echo "--- Server output ---"
+          cat /tmp/audit.txt
+          echo "--- End output ---"
+
+          if grep -qiE "(pypi\.org|anthropic\.com|sentry\.io|segment\.io|telemetry\.|beacon\.)" \
+              /tmp/audit.txt; then
+            echo "FAIL: unexpected external service reference detected in server output"
+            exit 1
+          fi
+          echo "PASS: no unexpected outbound connections detected"

@@ -30,7 +30,7 @@ Authorization policy lives in a YAML file (`MCP_POLICY_FILE`) rather than code o
 
 The policy engine is deny-by-default at the per-client level: if a `clients` block exists and a client is not listed, they fall back to the `default` block. If no `default` block is defined, the built-in default permits everything — this keeps the server usable without a policy file for trusted deployments.
 
-CIDR enforcement happens at `create_target` time, where hosts are explicitly defined. It does not re-check hosts at `start_scan` time (which only receives a target UUID) — this is a known limitation for v1.
+CIDR enforcement happens at `create_target` time, where hosts are explicitly defined. It does not re-check hosts at `start_scan` time (which only receives a target UUID) — this is a known limitation documented below.
 
 ## Minimal runtime dependencies
 
@@ -38,12 +38,27 @@ CIDR enforcement happens at `create_target` time, where hosts are explicitly def
 
 ---
 
-# Current limitations
+# Known limitations
+
+## Policy & authorization
 
 - **CIDR policy enforced at target creation only.** The `start_scan` tool takes a `target_id`, not a host list. CIDR policy is not re-validated at scan time — a target created before a more restrictive policy was deployed can still be scanned. Enforce policy at `create_target` time and manage target lifecycle accordingly.
+
 - **Hostnames not matched by CIDR rules.** When a client has explicit CIDR restrictions, hostname targets (e.g. `myhost.example.com`) are denied — they cannot be resolved to an IP at policy check time. Use IP addresses or CIDR ranges in targets when CIDR policy is active.
-- **No scan scheduling.** Tasks must be triggered explicitly via `start_scan`. There is no recurring or time-based scheduling.
-- **Hardcoded default UUIDs.** The default scan config and scanner UUIDs are hardcoded constants matching a standard Greenbone Community Edition install. Non-standard deployments must pass explicit UUIDs.
-- **Single GVM instance.** The server connects to one GVM instance, configured at startup. Multi-instance routing is not supported.
-- **`get_scan_status` polls on a fixed interval.** The tool polls every 10 seconds. There is no push notification or webhook mechanism from GVM.
+
 - **No API key expiry.** API keys are static strings with no built-in rotation or TTL. Revoke a key by removing it from `MCP_API_KEYS` and restarting the server.
+
+## Scanning
+
+- **No scan scheduling.** Tasks must be triggered explicitly via `start_scan`. There is no recurring or time-based scheduling.
+
+- **`get_scan_status` polls on a fixed interval.** The tool polls every 10 seconds with no push notification or webhook mechanism from GVM. It stops and returns a `"timeout"` error once the configurable deadline (`GVM_SCAN_POLL_TIMEOUT`, default 3600 s) is reached; call the tool again to resume monitoring.
+
+## Configuration & deployment
+
+- **Hardcoded default UUIDs.** The default scan config and scanner UUIDs are hardcoded constants matching a standard [Greenbone Community Edition](https://greenbone.github.io/docs/latest/22.4/container/index.html#download) install. Non-standard deployments must pass explicit UUIDs.
+
+- **Single GVM instance.** The server connects to one GVM instance, configured at startup. Multi-instance routing is not supported.
+
+> [!NOTE]
+> For CI-specific limitations and tradeoffs (telemetry audit coverage, GHCR mirror, QEMU emulation), see [ci.md](ci.md).

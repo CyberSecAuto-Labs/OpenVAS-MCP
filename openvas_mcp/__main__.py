@@ -7,7 +7,7 @@ from .auth import APIKeyStore, AuthMiddleware
 from .config import cfg
 from .logging_config import apply_json_formatter
 from .policy import load_policy, set_policy
-from .server import mcp
+from .server import KNOWN_TOOLS, mcp
 
 
 def main():
@@ -25,12 +25,28 @@ def main():
 
     apply_json_formatter(cfg.log_level)
 
+    import logging as _logging
+
+    if cfg.username == "admin":
+        _logging.getLogger(__name__).warning(
+            "GVM_USERNAME is set to the default 'admin'; "
+            "consider creating a dedicated GVM user with least privilege"
+        )
+
     try:
-        policy = load_policy(cfg.mcp_policy_file)
+        policy = load_policy(cfg.mcp_policy_file, known_tools=KNOWN_TOOLS)
     except ValueError as e:
         print(f"ERROR: {e}")
         sys.exit(1)
     set_policy(policy)
+
+    if cfg.mcp_allow_unauthenticated and cfg.mcp_policy_file:
+        _logging.getLogger(__name__).warning(
+            "MCP_ALLOW_UNAUTHENTICATED=1 is set with a policy file (%s); "
+            "all requests will be evaluated as the default policy identity (no client_id). "
+            "Named client entries in the policy will never be matched.",
+            cfg.mcp_policy_file,
+        )
 
     if cfg.mcp_transport == "stdio":
         mcp.run("stdio")
@@ -58,7 +74,7 @@ def main():
         )
         app = base_app
     else:
-        app = AuthMiddleware(base_app, key_store=key_store)
+        app = AuthMiddleware(base_app, key_store=key_store)  # type: ignore[assignment]
 
     async def _serve() -> None:
         config = uvicorn.Config(app, host=cfg.mcp_host, port=cfg.mcp_port)
