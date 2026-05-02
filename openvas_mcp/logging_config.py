@@ -6,6 +6,13 @@ import json
 import logging
 import time
 
+# Standard LogRecord attributes — never re-emitted as extra fields.
+_LOG_RECORD_BUILTINS = frozenset(
+    logging.LogRecord(
+        name="", level=0, pathname="", lineno=0, msg="", args=(), exc_info=None
+    ).__dict__.keys()
+) | {"message", "asctime"}
+
 
 class _JsonFormatter(logging.Formatter):
     def format(self, record: logging.LogRecord) -> str:
@@ -17,9 +24,9 @@ class _JsonFormatter(logging.Formatter):
         }
         if record.exc_info:
             payload["exc"] = self.formatException(record.exc_info)
-        for key in ("tool", "params", "status", "count", "error"):
-            if hasattr(record, key):
-                payload[key] = getattr(record, key)
+        for key, value in record.__dict__.items():
+            if key not in _LOG_RECORD_BUILTINS and not key.startswith("_"):
+                payload[key] = value
         return json.dumps(payload, default=str)
 
 

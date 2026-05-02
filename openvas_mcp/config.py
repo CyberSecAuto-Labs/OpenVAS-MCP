@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 _VALID_LOG_LEVELS = {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}
 _VALID_TRANSPORTS = {"stdio", "sse", "streamable-http"}
@@ -15,15 +15,19 @@ class Config:
     host: str
     port: int
     tls: bool
+    tls_cafile: str  # path to CA cert for self-signed GVM certs; empty = use system CA
+    tls_no_verify: bool  # skip TLS verification entirely (dangerous; requires explicit opt-in)
     username: str
-    password: str
+    password: str = field(repr=False)
     log_level: str
     mcp_transport: str
     mcp_host: str
     mcp_port: int
-    mcp_api_keys: str
+    mcp_api_keys: str = field(repr=False)
     mcp_policy_file: str
     mcp_allow_unauthenticated: bool
+    scan_poll_timeout: int  # max seconds get_scan_status will poll before returning timeout error
+    report_max_results: int  # max results returned by fetch_scan_results; 0 = unlimited
 
     @classmethod
     def from_env(cls) -> Config:
@@ -51,11 +55,33 @@ class Config:
         except ValueError:
             raise ValueError(f"MCP_PORT must be an integer, got: {raw_mcp_port!r}") from None
 
+        raw_poll_timeout = os.environ.get("GVM_SCAN_POLL_TIMEOUT", "3600")
+        try:
+            scan_poll_timeout = int(raw_poll_timeout)
+            if scan_poll_timeout <= 0:
+                raise ValueError
+        except ValueError:
+            raise ValueError(
+                f"GVM_SCAN_POLL_TIMEOUT must be a positive integer, got: {raw_poll_timeout!r}"
+            ) from None
+
+        raw_max_results = os.environ.get("GVM_REPORT_MAX_RESULTS", "2000")
+        try:
+            report_max_results = int(raw_max_results)
+            if report_max_results < 0:
+                raise ValueError
+        except ValueError:
+            raise ValueError(
+                f"GVM_REPORT_MAX_RESULTS must be a non-negative integer, got: {raw_max_results!r}"
+            ) from None
+
         return cls(
             socket_path=os.environ.get("GVM_SOCKET_PATH", "/run/gvmd/gvmd.sock"),
             host=os.environ.get("GVM_HOST", ""),
             port=port,
             tls=os.environ.get("GVM_TLS", "").lower() in ("1", "true", "yes"),
+            tls_cafile=os.environ.get("GVM_TLS_CAFILE", ""),
+            tls_no_verify=os.environ.get("GVM_TLS_NO_VERIFY", "").lower() in ("1", "true", "yes"),
             username=os.environ.get("GVM_USERNAME", "admin"),
             password=os.environ.get("GVM_PASSWORD", ""),
             log_level=log_level,
@@ -63,9 +89,11 @@ class Config:
             mcp_host=os.environ.get("MCP_HOST", "127.0.0.1"),
             mcp_port=mcp_port,
             mcp_api_keys=os.environ.get("MCP_API_KEYS", ""),
-            mcp_policy_file=os.environ.get("MCP_POLICY_FILE", "examples/policy.yaml"),
+            mcp_policy_file=os.environ.get("MCP_POLICY_FILE", ""),
             mcp_allow_unauthenticated=os.environ.get("MCP_ALLOW_UNAUTHENTICATED", "").lower()
             in ("1", "true", "yes"),
+            scan_poll_timeout=scan_poll_timeout,
+            report_max_results=report_max_results,
         )
 
     def missing_required(self) -> list[str]:
@@ -78,4 +106,10 @@ class Config:
         return missing
 
 
-cfg: Config = Config.from_env()
+try:
+    cfg: Config = Config.from_env()
+except ValueError as _cfg_err:
+    import sys as _sys
+
+    print(f"ERROR: Invalid configuration: {_cfg_err}", file=_sys.stderr)
+    _sys.exit(1)
