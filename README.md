@@ -3,14 +3,14 @@
 [![Lint & Test](https://github.com/CyberSecAuto-Labs/OpenVAS-MCP/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/CyberSecAuto-Labs/OpenVAS-MCP/actions/workflows/ci.yml)
 [![Docker](https://github.com/CyberSecAuto-Labs/OpenVAS-MCP/actions/workflows/docker.yml/badge.svg?branch=main)](https://github.com/CyberSecAuto-Labs/OpenVAS-MCP/actions/workflows/docker.yml)
 [![Integration tests](https://github.com/CyberSecAuto-Labs/OpenVAS-MCP/actions/workflows/integration.yml/badge.svg?branch=main)](https://github.com/CyberSecAuto-Labs/OpenVAS-MCP/actions/workflows/integration.yml)
-[![Telemetry audit](https://github.com/CyberSecAuto-Labs/OpenVAS-MCP/actions/workflows/telemetry-audit.yml/badge.svg?branch=main)](https://github.com/CyberSecAuto-Labs/OpenVAS-MCP/actions/workflows/telemetry-audit.yml)
+[![Startup egress audit](https://github.com/CyberSecAuto-Labs/OpenVAS-MCP/actions/workflows/startup-egress.yml/badge.svg?branch=main)](https://github.com/CyberSecAuto-Labs/OpenVAS-MCP/actions/workflows/startup-egress.yml)
 ![Coverage](docs/coverage-badge.svg)
 
 A self-hosted MCP server that gives AI agents structured access to [OpenVAS / Greenbone](https://github.com/greenbone/openvas-scanner) vulnerability scanning — without sending your data anywhere.
 
 OpenVAS has no native interface for AI agents. Most integrations require cloud connectivity or expose GVM credentials to every client. OpenVAS-MCP solves this:
 
-- **Local-first.** Talks only to your GVM instance. No telemetry, no external calls — [verified by CI](.github/workflows/telemetry-audit.yml).
+- **Local-first.** Talks only to your GVM instance. No telemetry, no external calls — [verified by CI](.github/workflows/startup-egress.yml).
 - **Credential isolation.** AI agents authenticate to the MCP server; the server holds the single GVM service account.
 - **Thin bridge.** Returns structured scan data as-is. Analysis and reporting logic belong in the agent or a platform built on top.
 
@@ -154,8 +154,9 @@ See [docs/configuration.md](docs/configuration.md) for the full reference, inclu
 Every release image is:
 
 - **Signed** with [cosign](https://github.com/sigstore/cosign) keyless OIDC signing — no long-lived key to compromise.
-- **SBOM attached** — a CycloneDX JSON bill of materials is attached to each GitHub Release for vulnerability scanning and compliance audits.
-- **Telemetry-audited** — the [`telemetry-audit` workflow](.github/workflows/telemetry-audit.yml) runs the server in a network-isolated container (`--network=none`) on every push and PR, asserting no unexpected outbound connections.
+- **SBOM attached** — a [CycloneDX](https://cyclonedx.org) JSON bill of materials is generated with [syft](https://github.com/anchore/syft) and attached to each GitHub Release.
+- **Vulnerability-scanned** — [grype](https://github.com/anchore/grype) scans the SBOM at release time and fails on `high` severity findings.
+- **Egress-audited** — the [`startup-egress` workflow](.github/workflows/startup-egress.yml) traces `connect()` syscalls via `strace` on every push and PR, asserting no unexpected outbound connections at startup. Integration tests extend this to live GMP code paths.
 
 Verify the image signature before running:
 

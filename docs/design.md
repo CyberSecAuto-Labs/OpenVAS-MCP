@@ -61,4 +61,4 @@ CIDR enforcement happens at `create_target` time, where hosts are explicitly def
 - **Single GVM instance.** The server connects to one GVM instance, configured at startup. Multi-instance routing is not supported.
 
 > [!NOTE]
-> For CI-specific limitations and tradeoffs (telemetry audit coverage, GHCR mirror), see [ci.md](ci.md).
+> For CI-specific constraints and tradeoffs (GHCR mirror, auth secret), see [ci.md](ci.md).

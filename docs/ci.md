@@ -1,6 +1,6 @@
 # CI pipelines
 
-Six GitHub Actions workflows run against this repository. This document describes what each one does, what it guarantees, and where tradeoffs were made.
+Seven GitHub Actions workflows run against this repository. This document describes what each one does, what it guarantees, and where tradeoffs were made.
 
 ## Workflows
 
@@ -8,11 +8,10 @@ Six GitHub Actions workflows run against this repository. This document describe
 
 **Triggers:** push and PRs targeting `develop` or `main`
 
-Runs three jobs in parallel:
+Runs two jobs in parallel:
 
 - **Lint** — `ruff check`, `ruff format --check`, and `mypy` on Python 3.11.
-- **Test** — `pytest` with coverage enforcement (`--cov-fail-under=80`) across Python 3.10, 3.11, and 3.12 in parallel. Fail-fast is disabled so all three versions always report.
-- **Coverage badge** — downloads the 3.11 coverage XML artifact and commits an updated `docs/coverage-badge.svg` on push (skipped on PRs to avoid badge noise).
+- **Test** — `pytest` with coverage enforcement (`--cov-fail-under=80`) across Python 3.10, 3.11, and 3.12. Fail-fast is disabled so all three versions always report. The 3.11 run uploads a `.coverage` artifact used by `coverage.yml` for the combined badge.
 
 **Guarantees:** the package is importable, typed, and tested on all supported Python versions before anything merges.
 
@@ -22,9 +21,9 @@ Runs three jobs in parallel:
 
 **Triggers:** push and PRs targeting `main` only (not `develop`)
 
-Stands up the full [Greenbone Community Edition](https://greenbone.github.io/docs/latest/22.4/container/index.html#download) stack via Docker Compose, sets a known admin password, and runs `tests/integration/` against a live `gvmd` instance.
+Stands up the full [Greenbone Community Edition](https://greenbone.github.io/docs/latest/22.4/container/index.html#download) stack via Docker Compose, sets a known admin password, and runs `tests/integration/` against a live `gvmd` instance. Tests run under `--netaudit` (strace-level egress audit) and collect coverage for the GVM-dependent layer (`gvm_client.py`, `__main__.py`, `logging_config.py`), uploading a `.coverage` artifact for `coverage.yml`.
 
-**Guarantees:** GMP authentication, session management, and the full tool call path work against a real scanner before anything reaches `main`.
+**Guarantees:** GMP authentication, session management, and the full tool call path work against a real scanner before anything reaches `main`. No unexpected outbound connections are made during the test run.
 
 > [!NOTE]
 > Integration tests only run on `main`-targeting branches. The full Greenbone stack is heavy (~30 container images). Fast feedback on feature branches comes from the unit tests in `ci.yml`.
@@ -33,6 +32,22 @@ Stands up the full [Greenbone Community Edition](https://greenbone.github.io/doc
 
 - **GHCR mirror** — Greenbone's registry (`registry.community.greenbone.net`) drops connections mid-transfer for large blobs from GitHub Actions runner IPs. All 19 Greenbone images are mirrored to `ghcr.io/cybersecauto-labs/greenbone/` and pulled from there instead. The mirror is kept fresh by the `mirror-greenbone-images.yml` workflow.
 - **Auth secret** — the GHCR packages are private (pushed locally, not linked to this repository, so `GITHUB_TOKEN` cannot read them automatically). A `GHCR_READ_PAT` repo secret holds a PAT with `read:packages` scope. The long-term fix is to make the packages public or run the mirror workflow from `main` so packages get linked to the repo and `GITHUB_TOKEN` works automatically.
+
+---
+
+### Coverage badge (`coverage.yml`)
+
+**Triggers:** `workflow_run` on either `Lint & Test` or `Integration tests` completing on `main` (push only, not PRs)
+
+Runs two jobs:
+
+- **Gate** — fires on whichever workflow finishes first. Checks whether the other has also completed for the same commit SHA via `gh run list`. If not, exits immediately without generating a badge.
+- **Badge** — runs only when the gate confirms both artifacts exist. Downloads `coverage-unit` and `coverage-integration` by run ID, combines them with `coverage combine`, generates a unified XML report, and commits an updated `docs/coverage-badge.svg`.
+
+**Guarantees:** the badge always reflects true combined coverage — unit tests cover the pure-logic layer; integration tests cover the GVM-dependent layer (`gvm_client.py`, `__main__.py`, `logging_config.py`). Each suite measures only what it can actually exercise, and the badge is never generated from partial data.
+
+> [!NOTE]
+> The badge is only updated after both workflows complete on `main`. On `develop` branches the badge is unchanged — fast-feedback coverage comes from the `--cov-fail-under=80` check in `ci.yml`.
 
 ---
 
@@ -46,16 +61,16 @@ Builds the `openvas-mcp` Docker image on every push and PR. Pushes to `ghcr.io/c
 
 ---
 
-### Telemetry audit (`telemetry-audit.yml`)
+### Startup egress audit (`startup-egress.yml`)
 
 **Triggers:** push and PRs targeting `develop` or `main`
 
-Builds the image and runs the server inside a `--network=none` Docker container (completely network-isolated). Any outbound TCP or DNS attempt fails immediately. The workflow scans the server output for references to known telemetry endpoints (`pypi.org`, `anthropic.com`, `sentry.io`, `segment.io`, etc.) and fails if any are found.
+Network egress is audited at two levels using [netaudit](https://pypi.org/project/netaudit/), which traces `connect()` syscalls via `strace` and fails on any connection to a non-loopback, non-Unix address:
 
-**Guarantees:** the server and its dependencies make no unexpected outbound connections on startup — the "local-first, no telemetry" claim is verified on every push, not just stated in the README.
+- **Startup path** (`startup-egress.yml`) — runs `python -m openvas_mcp` directly under `netaudit run`. Catches any phone-home behaviour introduced by the server or its dependencies at import/startup time. Runs on every push to `develop` or `main` for fast feedback.
+- **Live code paths** (`integration.yml`) — passes `--netaudit` to pytest, which re-execs the test process under strace and attributes any violation to the specific test that triggered it. Covers GMP calls, session management, and all tool handlers against a real `gvmd` instance.
 
-> [!NOTE]
-> The audit catches connections that produce output or fail loudly. A dependency that phones home silently (no log output, fire-and-forget) would pass. A full socket-level audit (e.g. `strace` or `tcpdump` inside the container) would be more thorough but is not yet implemented. This is tracked as a known limitation in [design.md](design.md).
+**Guarantees:** the "local-first, no telemetry" claim is verified at the socket level on every push — both at startup and across the full tool call surface exercised by the integration tests.
 
 ---
 
