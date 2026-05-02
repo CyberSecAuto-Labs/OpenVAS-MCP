@@ -7,7 +7,7 @@ name = "openvas-mcp"
 version = "0.3.0"
 requires-python = ">=3.10"
 dependencies = [
-    "mcp>=1.0.0",
+    "mcp>=1.27.0",
     "python-gvm>=26.0.0",
     "pyyaml>=6.0",
 ]
