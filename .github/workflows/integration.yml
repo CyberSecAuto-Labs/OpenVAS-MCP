@@ -24,7 +24,7 @@ jobs:
           python-version: "3.11"
 
       - name: Install package and dev dependencies
-        run: pip install -e ".[dev]"
+        run: pip install -e ".[dev]" netaudit
 
       - name: Log in to GHCR
         uses: docker/login-action@v3
