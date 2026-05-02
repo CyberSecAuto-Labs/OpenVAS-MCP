@@ -1,0 +1,7 @@
+[run]
+source = openvas_mcp
+omit =
+    openvas_mcp/server.py
+    openvas_mcp/auth.py
+    openvas_mcp/policy.py
+    openvas_mcp/config.py

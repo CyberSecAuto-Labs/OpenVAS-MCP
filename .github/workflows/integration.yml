@@ -84,8 +84,18 @@ jobs:
           GVM_HOST: "127.0.0.1"
           GVM_PORT: "9393"
           GVM_PASSWORD: "cipassword123"
-        run: pytest tests/integration/ -v
+        run: |
+          pytest tests/integration/ -v --netaudit \
+            --cov=openvas_mcp --cov-config=.coveragerc-integration --cov-report=term-missing
+
+      - name: Upload integration coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-integration
+          path: .coverage
 
       - name: Stop stack
         if: always()
         run: docker compose -f docker/openvas/compose.yaml down -v
+

@@ -1,0 +1,35 @@
+name: Startup egress audit
+
+on:
+  push:
+    branches: ["develop", "main"]
+  pull_request:
+    branches: ["develop", "main"]
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  startup-egress:
+    name: Startup egress audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install package and netaudit
+        run: pip install -e ".[dev]" netaudit
+
+      - name: Audit network egress
+        # netaudit traces connect() syscalls via strace — any connection attempt
+        # to a non-loopback, non-Unix address fails the job. No Docker or network
+        # isolation needed; violations are caught at the syscall level.
+        env:
+          GVM_PASSWORD: audit-test
+          GVM_HOST: localhost
+          MCP_TRANSPORT: sse
+          MCP_ALLOW_UNAUTHENTICATED: "1"
+        run: netaudit run -- timeout 20 python -m openvas_mcp
