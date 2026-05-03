@@ -2,6 +2,7 @@ ignore:
   # jaraco.context is a transitive dep pulled in by mcp's dependency chain.
   # Pinning it in requirements.txt/pyproject.toml doesn't reliably override
   # transitive resolution. Track mcp upstream for a fix; ignore until resolved.
+  # Re-evaluate: https://github.com/CyberSecAuto-Labs/OpenVAS-MCP/issues/19
   - vulnerability: GHSA-58pv-8j8x-9vj2
     package:
       name: jaraco-context
