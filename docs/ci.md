@@ -1,6 +1,6 @@
 # CI pipelines
 
-Seven GitHub Actions workflows run against this repository. This document describes what each one does, what it guarantees, and where tradeoffs were made.
+Eight GitHub Actions workflows run against this repository. This document describes what each one does, what it guarantees, and where tradeoffs were made.
 
 ## Workflows
 
@@ -74,11 +74,21 @@ Network egress is audited at two levels using [netaudit](https://pypi.org/projec
 
 ---
 
+### Vulnerability scan (`vuln-scan.yml`)
+
+**Triggers:** PRs targeting `main`
+
+Builds the image locally (no push) and runs [grype](https://github.com/anchore/grype) against its SBOM, failing on fixable `high` or `critical` CVEs (`--only-fixed`). This gives early signal before a release tag is cut — PRs can't scan a published image since it doesn't exist yet.
+
+**Guarantees:** no fixable high/critical CVEs are introduced in a PR before they would block a release.
+
+---
+
 ### Release (`release.yml`)
 
 **Triggers:** push of a version tag (`v*.*.*`)
 
-Builds and pushes a versioned image to GHCR, signs it with [cosign](https://github.com/sigstore/cosign) keyless OIDC signing, generates a [CycloneDX](https://cyclonedx.org) SBOM with [syft](https://github.com/anchore/syft), scans it with [grype](https://github.com/anchore/grype) (fails on `high` severity findings), and creates a GitHub Release with the changelog, SBOM, and compose files attached.
+Builds and pushes a versioned image to GHCR, signs it with [cosign](https://github.com/sigstore/cosign) keyless OIDC signing, generates a [CycloneDX](https://cyclonedx.org) SBOM with [syft](https://github.com/anchore/syft), scans it with [grype](https://github.com/anchore/grype) (fails on fixable `high` findings, `--only-fixed`), and creates a GitHub Release with the changelog, SBOM, and compose files attached.
 
 **Guarantees:** every published image has a verifiable provenance chain (OIDC-signed by the Actions workflow identity, not a long-lived key), a bill of materials, and has passed a vulnerability scan at build time.
 

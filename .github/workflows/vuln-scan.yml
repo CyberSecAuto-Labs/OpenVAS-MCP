@@ -1,0 +1,39 @@
+name: Vulnerability scan
+
+on:
+  pull_request:
+    branches: ["main"]
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  vuln-scan:
+    name: Vulnerability scan (grype)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          tags: openvas-mcp:pr-scan
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Generate SBOM
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh \
+            | sh -s -- -b /usr/local/bin
+          syft openvas-mcp:pr-scan -o cyclonedx-json > sbom.cyclonedx.json
+
+      - name: Scan for fixable high/critical CVEs
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh \
+            | sh -s -- -b /usr/local/bin
+          grype sbom:sbom.cyclonedx.json --fail-on high --only-fixed --config .grype.yaml
