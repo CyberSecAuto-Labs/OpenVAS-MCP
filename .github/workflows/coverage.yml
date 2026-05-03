@@ -32,16 +32,18 @@ jobs:
           branch="${{ github.event.workflow_run.head_branch }}"
           triggering="${{ github.event.workflow_run.name }}"
 
+          repo="${{ github.repository }}"
+
           if [ "$triggering" = "Integration tests" ]; then
             integration_run_id="${{ github.event.workflow_run.id }}"
-            unit_run_id=$(gh run list --workflow=ci.yml --branch="$branch" \
+            unit_run_id=$(gh run list --repo="$repo" --workflow=ci.yml --branch="$branch" \
               --json databaseId,headSha,status --limit 20 \
               | jq -r --arg sha "$sha" \
               '.[] | select(.headSha == $sha and .status == "completed") | .databaseId' \
               | head -1)
           else
             unit_run_id="${{ github.event.workflow_run.id }}"
-            integration_run_id=$(gh run list --workflow=integration.yml --branch="$branch" \
+            integration_run_id=$(gh run list --repo="$repo" --workflow=integration.yml --branch="$branch" \
               --json databaseId,headSha,status --limit 20 \
               | jq -r --arg sha "$sha" \
               '.[] | select(.headSha == $sha and .status == "completed") | .databaseId' \
@@ -82,6 +84,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh run download ${{ needs.gate.outputs.unit_run_id }} \
+            --repo=${{ github.repository }} \
             --name coverage-unit \
             --dir coverage-unit
 
@@ -90,6 +93,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh run download ${{ needs.gate.outputs.integration_run_id }} \
+            --repo=${{ github.repository }} \
             --name coverage-integration \
             --dir coverage-integration
 
