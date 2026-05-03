@@ -155,7 +155,7 @@ Every release image is:
 
 - **Signed** with [cosign](https://github.com/sigstore/cosign) keyless OIDC signing — no long-lived key to compromise.
 - **SBOM attached** — a [CycloneDX](https://cyclonedx.org) JSON bill of materials is generated with [syft](https://github.com/anchore/syft) and attached to each GitHub Release.
-- **Vulnerability-scanned** — [grype](https://github.com/anchore/grype) scans the SBOM at release time and fails on `high` severity findings.
+- **Vulnerability-scanned** — [grype](https://github.com/anchore/grype) scans the SBOM on every PR (`vuln-scan.yml`) and at release time, failing on fixable `high` severity findings (`--only-fixed`).
 - **Egress-audited** — the [`startup-egress` workflow](.github/workflows/startup-egress.yml) traces `connect()` syscalls via `strace` on every push and PR, asserting no unexpected outbound connections at startup. Integration tests extend this to live GMP code paths.
 
 Verify the image signature before running:

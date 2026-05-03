@@ -3,11 +3,13 @@ FROM python:3.11-slim AS builder
 WORKDIR /build
 COPY pyproject.toml requirements.txt ./
 COPY openvas_mcp/ ./openvas_mcp/
-RUN pip install --no-cache-dir --prefix=/install .
+RUN pip install --no-cache-dir -U pip setuptools wheel && \
+    pip install --no-cache-dir --prefix=/install -c requirements.txt .
 
 FROM python:3.11-slim
 
-RUN useradd --create-home --shell /bin/sh --uid 1000 mcp
+RUN pip install --no-cache-dir -U pip setuptools wheel && \
+    useradd --create-home --shell /bin/sh --uid 1000 mcp
 
 WORKDIR /app
 

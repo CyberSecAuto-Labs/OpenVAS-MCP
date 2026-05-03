@@ -19,15 +19,15 @@ jobs:
       id-token: write   # cosign keyless OIDC signing
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0  # full history for changelog
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: Log in to GHCR
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -35,7 +35,7 @@ jobs:
 
       - name: Build and push versioned image
         id: build
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           push: true
@@ -79,7 +79,7 @@ jobs:
         run: |
           curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh \
             | sh -s -- -b /usr/local/bin
-          grype sbom:sbom.cyclonedx.json --fail-on high
+          grype sbom:sbom.cyclonedx.json --fail-on high --only-fixed --config .grype.yaml
 
       - name: Package release artifacts
         run: |
@@ -88,7 +88,7 @@ jobs:
           cp compose.override.yaml release-artifacts/compose.override.yaml
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           name: ${{ github.ref_name }}
           body: |

@@ -1,0 +1,18 @@
+ignore:
+  # jaraco.context is a transitive dep pulled in by mcp's dependency chain.
+  # Pinning it in requirements.txt/pyproject.toml doesn't reliably override
+  # transitive resolution. Track mcp upstream for a fix; ignore until resolved.
+  # Re-evaluate: https://github.com/CyberSecAuto-Labs/OpenVAS-MCP/issues/19
+  - vulnerability: GHSA-58pv-8j8x-9vj2
+    package:
+      name: jaraco-context
+      type: python
+
+  # Python interpreter CVEs fixed only in 3.13+ — no backport to 3.11/3.12.
+  # The fix version is marked with '*' by grype, indicating a different release
+  # branch. These are not actionable without upgrading the base image beyond our
+  # supported Python range.
+  - vulnerability: CVE-2025-13836
+    package:
+      name: python
+      type: binary
