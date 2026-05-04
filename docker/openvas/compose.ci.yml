@@ -1,4 +1,4 @@
-# CI override: pull Greenbone Community Edition images from the GHCR mirror
+# CI override: pull Greenbone Community Edition images from the public GHCR mirror
 # instead of registry.community.greenbone.net, which drops connections
 # mid-transfer for large blobs from GitHub Actions runner IPs.
 #

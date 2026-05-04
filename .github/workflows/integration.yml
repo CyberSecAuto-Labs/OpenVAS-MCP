@@ -26,13 +26,6 @@ jobs:
       - name: Install package and dev dependencies
         run: pip install -e ".[dev]" netaudit
 
-      - name: Log in to GHCR
-        uses: docker/login-action@v4
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GHCR_READ_PAT }}
-
       - name: Pull Docker Hub images
         run: docker pull alpine/socat
 
