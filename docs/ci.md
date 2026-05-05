@@ -19,14 +19,11 @@ Runs two jobs in parallel:
 
 ### Integration tests (`integration.yml`)
 
-**Triggers:** push and PRs targeting `main` only (not `develop`)
+**Triggers:** push and PRs targeting `develop` or `main`
 
 Stands up the full [Greenbone Community Edition](https://greenbone.github.io/docs/latest/22.4/container/index.html#download) stack via Docker Compose, sets a known admin password, and runs `tests/integration/` against a live `gvmd` instance. Tests run under `--netaudit` (strace-level egress audit) and collect coverage for the GVM-dependent layer (`gvm_client.py`, `__main__.py`, `logging_config.py`), uploading a `.coverage` artifact for `coverage.yml`.
 
-**Guarantees:** GMP authentication, session management, and the full tool call path work against a real scanner before anything reaches `main`. No unexpected outbound connections are made during the test run.
-
-> [!NOTE]
-> Integration tests only run on `main`-targeting branches. The full Greenbone stack is heavy (~30 container images). Fast feedback on feature branches comes from the unit tests in `ci.yml`.
+**Guarantees:** GMP authentication, session management, and the full tool call path work against a real scanner before anything merges.
 
 **Known constraints:**
 
@@ -47,7 +44,7 @@ Runs two jobs:
 **Guarantees:** the badge always reflects true combined coverage — unit tests cover the pure-logic layer; integration tests cover the GVM-dependent layer (`gvm_client.py`, `__main__.py`, `logging_config.py`). Each suite measures only what it can actually exercise, and the badge is never generated from partial data.
 
 > [!NOTE]
-> The badge is only updated after both workflows complete on `main`. On `develop` branches the badge is unchanged — fast-feedback coverage comes from the `--cov-fail-under=80` check in `ci.yml`.
+> The badge is only updated after both workflows complete on `main`. On `develop` the badge is unchanged — coverage enforcement comes from the `--cov-fail-under=80` check in `ci.yml`.
 
 ---
 
@@ -76,7 +73,7 @@ Network egress is audited at two levels using [netaudit](https://pypi.org/projec
 
 ### Vulnerability scan (`vuln-scan.yml`)
 
-**Triggers:** PRs targeting `main`
+**Triggers:** PRs targeting `develop` or `main`
 
 Builds the image locally (no push) and runs [grype](https://github.com/anchore/grype) against its SBOM, failing on fixable `high` or `critical` CVEs (`--only-fixed`). This gives early signal before a release tag is cut — PRs can't scan a published image since it doesn't exist yet.
 
