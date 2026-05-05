@@ -87,6 +87,7 @@ jobs:
         with:
           name: coverage-integration
           path: .coverage
+          include-hidden-files: true
 
       - name: Stop stack
         if: always()
