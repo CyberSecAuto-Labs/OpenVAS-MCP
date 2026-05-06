@@ -6,7 +6,7 @@ name: Coverage badge
 on:
   workflow_run:
     workflows: ["Lint & Test", "Integration tests"]
-    branches: ["main"]
+    branches: ["main", "test/coverage-artifact-fix"]
     types: [completed]
 
 env:
