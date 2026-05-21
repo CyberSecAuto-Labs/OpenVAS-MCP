@@ -2,7 +2,7 @@ name: Vulnerability scan
 
 on:
   pull_request:
-    branches: ["main"]
+    branches: ["develop", "main"]
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
