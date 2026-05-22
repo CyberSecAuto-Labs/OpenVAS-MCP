@@ -110,8 +110,10 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          # Stash the generated SVG outside the working tree
+          # Stash the generated SVG outside the working tree, then remove it so
+          # git checkout badges doesn't abort on the untracked file conflict
           cp coverage-badge.svg /tmp/coverage-badge.svg
+          rm coverage-badge.svg
 
           # Switch to the badges branch, creating it as an orphan if it doesn't exist yet
           if git fetch origin badges --depth=1 2>/dev/null; then
