@@ -4,7 +4,7 @@
 [![Docker](https://github.com/CyberSecAuto-Labs/OpenVAS-MCP/actions/workflows/docker.yml/badge.svg?branch=main)](https://github.com/CyberSecAuto-Labs/OpenVAS-MCP/actions/workflows/docker.yml)
 [![Integration tests](https://github.com/CyberSecAuto-Labs/OpenVAS-MCP/actions/workflows/integration.yml/badge.svg?branch=main)](https://github.com/CyberSecAuto-Labs/OpenVAS-MCP/actions/workflows/integration.yml)
 [![Startup egress audit](https://github.com/CyberSecAuto-Labs/OpenVAS-MCP/actions/workflows/startup-egress.yml/badge.svg?branch=main)](https://github.com/CyberSecAuto-Labs/OpenVAS-MCP/actions/workflows/startup-egress.yml)
-![Coverage](docs/coverage-badge.svg)
+![Coverage](https://raw.githubusercontent.com/CyberSecAuto-Labs/OpenVAS-MCP/badges/coverage-badge.svg)
 
 A self-hosted MCP server that gives AI agents structured access to [OpenVAS / Greenbone](https://github.com/greenbone/openvas-scanner) vulnerability scanning — without sending your data anywhere.
 
