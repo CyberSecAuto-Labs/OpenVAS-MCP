@@ -1,4 +1,4 @@
-mcp>=1.27.1
+mcp>=1.27.2
 python-gvm>=27.2.0
 pyyaml>=6.0.3
 jaraco.context>=6.1.2
