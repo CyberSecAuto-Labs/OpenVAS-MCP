@@ -4,11 +4,11 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "openvas-mcp"
-version = "0.4.3"
+version = "0.4.4"
 requires-python = ">=3.10"
 dependencies = [
     "mcp>=2.0.0,<3",
-    "python-gvm>=27.0.2",
+    "python-gvm>=27.2.0",
     "pyyaml>=6.0.3",
     "jaraco.context>=6.1.2",
 ]
@@ -19,9 +19,9 @@ dev = [
     "pytest-asyncio>=1.3.0",
     "pytest-cov>=7.1.0",
     "genbadge[coverage]>=1.1.3",
-    "ruff>=0.15.12",
-    "mypy>=1.20.2",
-    "types-PyYAML>=6.0.12.20260408",
+    "ruff>=0.15.14",
+    "mypy>=2.1.0",
+    "types-PyYAML>=6.0.12.20260518",
 ]
 
 [tool.setuptools.packages.find]
