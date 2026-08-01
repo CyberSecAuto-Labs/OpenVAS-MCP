@@ -71,7 +71,7 @@ openvas_mcp/
 
 ### Identity
 
-`AuthMiddleware` is a pure ASGI middleware (not `BaseHTTPMiddleware`) wrapping the FastMCP Starlette app for HTTP transports. It validates the Bearer token against the `APIKeyStore` loaded from `MCP_API_KEYS` and stores the `ClientIdentity` in a `contextvars.ContextVar`. This makes the identity available to all tool handlers without threading through function parameters.
+`AuthMiddleware` is a pure ASGI middleware (not `BaseHTTPMiddleware`) wrapping the `MCPServer` Starlette app for HTTP transports. It validates the Bearer token against the `APIKeyStore` loaded from `MCP_API_KEYS` and stores the `ClientIdentity` in a `contextvars.ContextVar`. This makes the identity available to all tool handlers without threading through function parameters.
 
 If `MCP_API_KEYS` is not set, the middleware is not installed and all HTTP requests are accepted — intended for development only. Set `MCP_ALLOW_UNAUTHENTICATED=1` to acknowledge this explicitly; omitting it when no keys are configured causes startup to fail.
 
