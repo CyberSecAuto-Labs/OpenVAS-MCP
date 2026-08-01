@@ -56,10 +56,14 @@ def main():
 
     import uvicorn
 
+    # Pass the bind address through: these apps auto-enable DNS rebinding
+    # protection with a loopback-only allowlist when host is a localhost
+    # address. Omitting it would apply that allowlist to a 0.0.0.0 bind and
+    # reject every non-loopback client.
     if cfg.mcp_transport == "sse":
-        base_app = mcp.sse_app()
+        base_app = mcp.sse_app(host=cfg.mcp_host)
     else:
-        base_app = mcp.streamable_http_app()
+        base_app = mcp.streamable_http_app(host=cfg.mcp_host)
 
     key_store = APIKeyStore(cfg.mcp_api_keys)
     if key_store.is_empty:

@@ -36,4 +36,6 @@ jobs:
         run: |
           curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh \
             | sh -s -- -b /usr/local/bin
-          grype sbom:sbom.cyclonedx.json --fail-on high --only-fixed --config .grype.yaml
+          grype sbom:sbom.cyclonedx.json --only-fixed --config .grype.yaml \
+            -o json > grype-report.json
+          python3 scripts/grype_gate.py grype-report.json --fail-on high

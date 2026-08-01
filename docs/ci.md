@@ -77,6 +77,8 @@ Network egress is audited at two levels using [netaudit](https://pypi.org/projec
 
 Builds the image locally (no push) and runs [grype](https://github.com/anchore/grype) against its SBOM, failing on fixable `high` or `critical` CVEs (`--only-fixed`). This gives early signal before a release tag is cut — PRs can't scan a published image since it doesn't exist yet.
 
+grype emits JSON; `scripts/grype_gate.py` decides the exit status. See [Interpreter CVEs and the release-line filter](#interpreter-cves-and-the-release-line-filter).
+
 **Guarantees:** no fixable high/critical CVEs are introduced in a PR before they would block a release.
 
 ---
@@ -85,7 +87,7 @@ Builds the image locally (no push) and runs [grype](https://github.com/anchore/g
 
 **Triggers:** push of a version tag (`v*.*.*`)
 
-Builds and pushes a versioned image to GHCR, signs it with [cosign](https://github.com/sigstore/cosign) keyless OIDC signing, generates a [CycloneDX](https://cyclonedx.org) SBOM with [syft](https://github.com/anchore/syft), scans it with [grype](https://github.com/anchore/grype) (fails on fixable `high` findings, `--only-fixed`), and creates a GitHub Release with the changelog, SBOM, and compose files attached.
+Builds and pushes a versioned image to GHCR, signs it with [cosign](https://github.com/sigstore/cosign) keyless OIDC signing, generates a [CycloneDX](https://cyclonedx.org) SBOM with [syft](https://github.com/anchore/syft), scans it with [grype](https://github.com/anchore/grype) (fails on fixable `high` findings, `--only-fixed`, gated by `scripts/grype_gate.py`), and creates a GitHub Release with the changelog, SBOM, and compose files attached.
 
 **Guarantees:** every published image has a verifiable provenance chain (OIDC-signed by the Actions workflow identity, not a long-lived key), a bill of materials, and has passed a vulnerability scan at build time.
 
@@ -104,3 +106,24 @@ Uses `skopeo copy --all` to copy all 19 [Greenbone Community Edition](https://gr
 
 > [!NOTE]
 > The weekly cadence means CI can run on images up to seven days old. Images are refreshed automatically after each new Greenbone stable release via the Monday schedule.
+
+---
+
+## Interpreter CVEs and the release-line filter
+
+Both scanning workflows share `.grype.yaml` and `scripts/grype_gate.py`.
+
+grype marks a CVE as fixed as soon as *any* release line carries the fix. CPython backports security fixes to the branches still in support, so an image on `python:3.11-slim` routinely gets findings whose only fixes are `3.13.x`, `3.14.x`, or a `3.15` pre-release. Those are real vulnerabilities, but nothing in the repo can clear them: rebuilding the image still yields 3.11, and there is no 3.11 release to move to.
+
+Left alone this fails every PR, and suppressing each CVE by ID in `.grype.yaml` means a new entry every few weeks — the list grows, nobody re-reads it, and a genuinely actionable finding eventually hides in it.
+
+Instead, `scripts/grype_gate.py` reads grype's JSON and drops a `python` binary finding when **none** of its fix versions land on the release line the image actually runs. The line is read from the scanned artifact, not hardcoded: on a `python:3.11-slim` image the comparison is against `3.11`, and moving the base image to 3.13 re-evaluates every finding against `3.13` with no config change.
+
+What this deliberately does *not* suppress:
+
+- A CPython CVE fixed in `3.11.16` — same line, a rebuild picks it up, so it fails the gate.
+- Anything that is not the interpreter binary. Findings in pip packages are untouched, which is the supply chain the repo actually controls.
+
+The script fails closed: a missing, malformed, or non-grype report exits non-zero rather than reporting a clean scan, and an unrecognised severity label sorts above `critical` so it can never fall below the threshold.
+
+`.grype.yaml` remains the place for per-CVE suppressions that need a case-by-case judgement and a tracking issue.
