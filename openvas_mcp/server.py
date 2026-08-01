@@ -9,7 +9,7 @@ import xml.etree.ElementTree as ET
 from typing import Any
 
 from gvm.errors import GvmError, GvmResponseError, GvmServerError
-from mcp.server.fastmcp import Context, FastMCP
+from mcp.server.mcpserver import Context, MCPServer
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
@@ -20,7 +20,9 @@ from .policy import get_policy
 
 logger = logging.getLogger(__name__)
 
-mcp = FastMCP("openvas", host=cfg.mcp_host, port=cfg.mcp_port)
+# MCPServer takes no host/port: the bind address belongs to the transport, and
+# is passed to sse_app()/streamable_http_app() and uvicorn in __main__.py.
+mcp = MCPServer("openvas")
 
 KNOWN_TOOLS: frozenset[str] = frozenset(
     {
