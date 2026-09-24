@@ -40,13 +40,19 @@ class TestElemText:
 
 
 def _target_xml(
-    tid: str = _VALID_UUID, name: str = "test-target", hosts: str = "10.0.0.1"
+    tid: str = _VALID_UUID,
+    name: str = "test-target",
+    hosts: str = "10.0.0.1",
+    max_hosts: str = "1",
+    exclude_hosts: str = "",
 ) -> ET.Element:
     root = ET.fromstring(f"""
     <get_targets_response>
         <target id="{tid}">
             <name>{name}</name>
             <hosts>{hosts}</hosts>
+            <exclude_hosts>{exclude_hosts}</exclude_hosts>
+            <max_hosts>{max_hosts}</max_hosts>
             <port_list><name>All TCP</name></port_list>
         </target>
     </get_targets_response>
@@ -54,14 +60,39 @@ def _target_xml(
     return root
 
 
-def _task_xml(tid: str = _VALID_UUID, name: str = "test-task", status: str = "Done") -> ET.Element:
+def _task_xml(
+    tid: str = _VALID_UUID,
+    name: str = "test-task",
+    status: str = "Done",
+    severity: str = "7.5",
+    timestamp: str = "2026-01-30T17:25:28+01:00",
+    report_count: str = "3",
+    finished_report_count: str = "2",
+    trend: str = "same",
+    target_id: str = _VALID_UUID,
+    target_name: str = "test-target",
+    with_last_report: bool = True,
+) -> ET.Element:
+    last_report = (
+        f"""<last_report>
+                <report id="{_VALID_UUID2}">
+                    <timestamp>{timestamp}</timestamp>
+                    <severity>{severity}</severity>
+                </report>
+            </last_report>"""
+        if with_last_report
+        else ""
+    )
     return ET.fromstring(f"""
     <get_tasks_response>
         <task id="{tid}">
             <name>{name}</name>
             <status>{status}</status>
             <progress>100</progress>
-            <last_report><report id="{_VALID_UUID2}"/></last_report>
+            <report_count>{report_count}<finished>{finished_report_count}</finished></report_count>
+            <trend>{trend}</trend>
+            <target id="{target_id}"><name>{target_name}</name></target>
+            {last_report}
         </task>
     </get_tasks_response>
     """)
@@ -116,6 +147,18 @@ class TestListTargets:
         result = await list_targets()
         assert result["error"] is True
         assert result["code"] == "connection_error"
+
+    async def test_host_count_from_max_hosts(self, gmp_session_mock):
+        gmp_session_mock.get_targets.return_value = _target_xml(
+            hosts="10.0.0.0/24", max_hosts="254", exclude_hosts="10.0.0.1"
+        )
+        row = (await list_targets())[0]
+        assert row["host_count"] == 254
+        assert row["exclude_hosts"] == "10.0.0.1"
+
+    async def test_missing_max_hosts_gives_null_host_count(self, gmp_session_mock):
+        gmp_session_mock.get_targets.return_value = _target_xml(max_hosts="unknown")
+        assert (await list_targets())[0]["host_count"] is None
 
 
 # ---------------------------------------------------------------------------
@@ -204,6 +247,7 @@ class TestCreateTarget:
 class TestListTasks:
     async def test_returns_list(self, gmp_session_mock):
         gmp_session_mock.get_tasks.return_value = _task_xml()
+        gmp_session_mock.get_targets.return_value = _target_xml()
         result = await list_tasks()
         assert isinstance(result, list)
         assert result[0]["id"] == _VALID_UUID
@@ -241,16 +285,19 @@ class TestListTasks:
 
     async def test_filter_string_passed_through(self, gmp_session_mock):
         gmp_session_mock.get_tasks.return_value = _task_xml()
+        gmp_session_mock.get_targets.return_value = _target_xml()
         await list_tasks(filter_string="name~weekly")
         gmp_session_mock.get_tasks.assert_called_once_with(filter_string="name~weekly")
 
     async def test_no_filter_passes_empty_string(self, gmp_session_mock):
         gmp_session_mock.get_tasks.return_value = _task_xml()
+        gmp_session_mock.get_targets.return_value = _target_xml()
         await list_tasks()
         gmp_session_mock.get_tasks.assert_called_once_with(filter_string="")
 
     async def test_whitespace_only_filter_treated_as_empty(self, gmp_session_mock):
         gmp_session_mock.get_tasks.return_value = _task_xml()
+        gmp_session_mock.get_targets.return_value = _target_xml()
         await list_tasks(filter_string="   ")
         gmp_session_mock.get_tasks.assert_called_once_with(filter_string="")
 
@@ -266,8 +313,65 @@ class TestListTasks:
         assert result["code"] == "validation_error"
         gmp_session_mock.get_tasks.assert_not_called()
 
+    # ---------------------------------------------------------------------------
 
-# ---------------------------------------------------------------------------
+    async def test_row_carries_report_and_target_fields(self, gmp_session_mock):
+        gmp_session_mock.get_tasks.return_value = _task_xml()
+        gmp_session_mock.get_targets.return_value = _target_xml()
+        row = (await list_tasks())[0]
+        assert row["severity"] == 7.5
+        assert row["last_report_date"] == "2026-01-30T17:25:28+01:00"
+        assert row["last_report"] == _VALID_UUID2
+        assert row["report_count"] == 3
+        assert row["finished_report_count"] == 2
+        assert row["trend"] == "same"
+        assert row["target_id"] == _VALID_UUID
+        assert row["target_name"] == "test-target"
+        assert row["host_count"] == 1
+
+    async def test_never_run_task_has_null_severity(self, gmp_session_mock):
+        gmp_session_mock.get_tasks.return_value = _task_xml(status="New", with_last_report=False)
+        gmp_session_mock.get_targets.return_value = _target_xml()
+        row = (await list_tasks())[0]
+        assert row["severity"] is None
+        assert row["last_report_date"] == ""
+        assert row["last_report"] == ""
+
+    async def test_unresolved_target_gives_null_host_count(self, gmp_session_mock):
+        """A target that is deleted, in the trashcan, or beyond GVM's row cap."""
+        gmp_session_mock.get_tasks.return_value = _task_xml(target_id=_VALID_UUID2)
+        gmp_session_mock.get_targets.return_value = _target_xml(tid=_VALID_UUID)
+        row = (await list_tasks())[0]
+        assert row["target_id"] == _VALID_UUID2
+        assert row["host_count"] is None
+
+    async def test_unparseable_max_hosts_gives_null_host_count(self, gmp_session_mock):
+        gmp_session_mock.get_tasks.return_value = _task_xml()
+        gmp_session_mock.get_targets.return_value = _target_xml(max_hosts="")
+        assert (await list_tasks())[0]["host_count"] is None
+
+    async def test_targets_fetched_unpaged(self, gmp_session_mock):
+        gmp_session_mock.get_tasks.return_value = _task_xml()
+        gmp_session_mock.get_targets.return_value = _target_xml()
+        await list_tasks()
+        gmp_session_mock.get_targets.assert_called_once_with(filter_string="rows=-1")
+
+    async def test_unsupported_filter_keyword_rejected(self, gmp_session_mock):
+        result = await list_tasks(filter_string="zzzbogus<4")
+        assert result["error"] is True
+        assert result["code"] == "validation_error"
+        assert "zzzbogus" in result["message"]
+        gmp_session_mock.get_tasks.assert_not_called()
+
+    async def test_relative_month_filter_accepted(self, gmp_session_mock):
+        gmp_session_mock.get_tasks.return_value = _task_xml()
+        gmp_session_mock.get_targets.return_value = _target_xml()
+        await list_tasks(filter_string="severity>5 and last<-1M rows=-1")
+        gmp_session_mock.get_tasks.assert_called_once_with(
+            filter_string="severity>5 and last<-1M rows=-1"
+        )
+
+
 # start_scan
 # ---------------------------------------------------------------------------
 
@@ -642,6 +746,170 @@ class TestGetScanStatus:
         result = await get_scan_status(_VALID_UUID, _make_ctx())
         assert result["error"] is True
         assert result["code"] == "gvm_error"
+
+    async def test_returns_same_row_shape_as_list_tasks(self, gmp_session_mock):
+        gmp_session_mock.get_task.return_value = _task_xml()
+        gmp_session_mock.get_targets.return_value = _target_xml()
+        gmp_session_mock.get_target.return_value = _target_xml()
+        result = await get_scan_status(_VALID_UUID, _make_ctx())
+
+        gmp_session_mock.get_tasks.return_value = _task_xml()
+        expected = (await list_tasks())[0]
+        assert result == expected
+        assert result["severity"] == 7.5
+        assert result["host_count"] == 1
+
+    async def test_target_resolved_once_across_polls(self, gmp_session_mock):
+        running = _task_xml(status="Running")
+        gmp_session_mock.get_task.side_effect = [running, running, _task_xml(status="Done")]
+        gmp_session_mock.get_target.return_value = _target_xml()
+
+        with patch("asyncio.sleep", new_callable=AsyncMock):
+            result = await get_scan_status(_VALID_UUID, _make_ctx())
+
+        assert result["status"] == "Done"
+        assert gmp_session_mock.get_task.call_count == 3
+        gmp_session_mock.get_target.assert_called_once_with(_VALID_UUID)
+        assert result["host_count"] == 1
+
+    async def test_unreadable_target_does_not_break_monitoring(self, gmp_session_mock):
+        from gvm.errors import GvmError
+
+        gmp_session_mock.get_task.return_value = _task_xml()
+        gmp_session_mock.get_target.side_effect = GvmError("permission denied")
+        result = await get_scan_status(_VALID_UUID, _make_ctx())
+        assert result["status"] == "Done"
+        assert result["host_count"] is None
+
+    async def test_task_without_target_skips_target_lookup(self, gmp_session_mock):
+        gmp_session_mock.get_task.return_value = ET.fromstring(f"""
+        <get_tasks_response>
+            <task id="{_VALID_UUID}">
+                <name>test</name><status>Done</status><progress>100</progress>
+            </task>
+        </get_tasks_response>
+        """)
+        result = await get_scan_status(_VALID_UUID, _make_ctx())
+        assert result["host_count"] is None
+        gmp_session_mock.get_target.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Filter validation
+# ---------------------------------------------------------------------------
+
+
+class TestValidateFilter:
+    """gvmd drops a term it cannot parse without reporting it, silently widening the
+    result set, so the boundary rejects anything gvmd would not honour."""
+
+    @pytest.mark.parametrize(
+        "filter_string",
+        [
+            "",
+            "name~weekly",
+            "status=Done",
+            "severity>5 and last<-1M rows=-1",
+            "severity>5 or total<4",
+            "not status=Done",
+            "AND",
+            "last<2026-08-01",
+            "last<2026-08-01T14:30",
+            "last<2026-08-01T14:30:00",
+            "created>-30d",
+            "modified<-1m",  # minutes: odd, but valid GMP
+            "rows=-1",
+            "first=1",
+            "min_qod=70",
+            "apply_overrides=1",
+            "sort=severity",
+            "sort-reverse=name",
+            "severity>5.5",
+            'name="my weekly task"',
+            "weekly",  # bare word: free-text search
+            "name!=weekly",
+            "name!~weekly",
+            "tag=reports rows=20",
+        ],
+    )
+    def test_accepts(self, filter_string):
+        from openvas_mcp.server import _validate_filter
+
+        assert _validate_filter(filter_string) is None
+
+    @pytest.mark.parametrize(
+        ("filter_string", "expected_in_message"),
+        [
+            ("zzzbogus<4", "zzzbogus"),
+            ("progress>50", "progress"),  # a real task element, but not a filter column
+            ("levels=hml", "levels"),
+            ("severity>5 and config~full", "config"),
+            ("last<-1x", "date"),
+            ("last<yesterday", "date"),
+            ("created>lastweek", "date"),
+            ("severity>high", "number"),
+            ("rows=all", "number"),
+            ("min_qod=high", "number"),
+            ("apply_overrides=yes", "apply_overrides"),
+            ("sort=zzzbogus", "sort"),
+            ('name="unbalanced', "double quote"),
+        ],
+    )
+    def test_rejects(self, filter_string, expected_in_message):
+        from openvas_mcp.server import _validate_filter
+
+        err = _validate_filter(filter_string)
+        assert err is not None
+        assert err["code"] == "validation_error"
+        assert expected_in_message in err["message"]
+
+    def test_date_error_explains_month_versus_minute_units(self):
+        from openvas_mcp.server import _validate_filter
+
+        err = _validate_filter("last<-1x")
+        assert err is not None
+        assert "M is months" in err["message"]
+
+    def test_unknown_keyword_error_lists_supported_keywords(self):
+        from openvas_mcp.server import _validate_filter
+
+        err = _validate_filter("zzzbogus<4")
+        assert err is not None
+        assert "severity" in err["message"]
+        assert "sort-reverse" in err["message"]
+
+    def test_warn_mode_passes_rejected_term_through(self, monkeypatch):
+        from openvas_mcp import server
+
+        monkeypatch.setattr(server.cfg, "mcp_filter_validation", "warn")
+        assert server._validate_filter("zzzbogus<4") is None
+
+    async def test_warn_mode_reaches_gvm(self, gmp_session_mock, monkeypatch):
+        from openvas_mcp import server
+
+        monkeypatch.setattr(server.cfg, "mcp_filter_validation", "warn")
+        gmp_session_mock.get_tasks.return_value = _task_xml()
+        gmp_session_mock.get_targets.return_value = _target_xml()
+        result = await list_tasks(filter_string="zzzbogus<4")
+        assert isinstance(result, list)
+        gmp_session_mock.get_tasks.assert_called_once_with(filter_string="zzzbogus<4")
+
+
+class TestSplitFilterTerms:
+    def test_quoted_value_kept_as_one_term(self):
+        from openvas_mcp.server import _split_filter_terms
+
+        assert _split_filter_terms('name="my task" rows=5') == ["name=my task", "rows=5"]
+
+    def test_unbalanced_quote_returns_none(self):
+        from openvas_mcp.server import _split_filter_terms
+
+        assert _split_filter_terms('name="my task') is None
+
+    def test_collapses_repeated_whitespace(self):
+        from openvas_mcp.server import _split_filter_terms
+
+        assert _split_filter_terms("  a   b  ") == ["a", "b"]
 
 
 # ---------------------------------------------------------------------------

@@ -55,6 +55,64 @@ _UUID_RE = re.compile(
 
 _MAX_FILTER_LEN = 1000
 
+# GMP filter keywords, grouped by the value grammar gvmd expects. Every entry was
+# verified against a live gvmd: a keyword outside this set is dropped from the filter
+# without any error, which *widens* the result set, so unknown keywords are rejected at
+# the boundary rather than passed through. Notably rejected because gvmd ignores them
+# for tasks: progress, permission, alterable, in_use, observers, config, scanner,
+# average_duration, overrides, notes, levels, timezone.
+_FILTER_TEXT_COLUMNS = frozenset(
+    {
+        "uuid",
+        "name",
+        "comment",
+        "status",
+        "trend",
+        "schedule",
+        "owner",
+        "hosts",
+        "usage_type",
+        "tag",
+        "target",
+        "threat",
+    }
+)
+_FILTER_NUMERIC_COLUMNS = frozenset(
+    {
+        "total",
+        "severity",
+        "false_positive",
+        "log",
+        "low",
+        "medium",
+        "high",
+        "result_hosts",
+        "fp_per_host",
+    }
+)
+_FILTER_DATE_COLUMNS = frozenset({"last", "created", "modified", "next_due"})
+_FILTER_COLUMNS = _FILTER_TEXT_COLUMNS | _FILTER_NUMERIC_COLUMNS | _FILTER_DATE_COLUMNS
+
+# Paging/sorting keywords: not columns, but honoured by gvmd.
+_FILTER_NUMERIC_CONTROLS = frozenset({"rows", "first", "min_qod"})
+_FILTER_SORT_CONTROLS = frozenset({"sort", "sort-reverse"})
+_FILTER_KEYWORDS = (
+    _FILTER_COLUMNS | _FILTER_NUMERIC_CONTROLS | _FILTER_SORT_CONTROLS | {"apply_overrides"}
+)
+
+# Boolean operators. GMP ORs adjacent terms by default, so "and" is significant.
+_FILTER_BOOLEANS = frozenset({"and", "or", "not"})
+
+_FILTER_TERM_RE = re.compile(r"^(?P<keyword>[A-Za-z_][A-Za-z0-9_-]*)(?P<op>!?[=~<>])(?P<value>.*)$")
+_FILTER_NUMBER_RE = re.compile(r"^[+-]?(\d+(\.\d*)?|\.\d+)$")
+# Absolute (2026-08-01, 2026-08-01T14:30[:00]) or relative (-30d) — see _RELATIVE_UNITS_HELP.
+_FILTER_DATE_RE = re.compile(r"^(\d{4}-\d{2}-\d{2}([T ]\d{2}:\d{2}(:\d{2})?)?|[+-]?\d+[smhdwMy])$")
+
+_RELATIVE_UNITS_HELP = (
+    "relative units are s=seconds, m=minutes, h=hours, d=days, w=weeks, M=months, "
+    "y=years — note that m is minutes and M is months"
+)
+
 # Task states GVM refuses to start from. A denylist rather than an allowlist of
 # startable states, so a status a future gvmd adds falls through to GVM, which
 # is authoritative either way.
@@ -73,14 +131,52 @@ def _elem_text(elem: ET.Element | None, tag: str, default: str = "") -> str:
     return (child.text or default) if child is not None else default
 
 
-def _task_to_dict(task: ET.Element) -> dict[str, Any]:
+def _elem_attr(elem: ET.Element | None, tag: str, attr: str, default: str = "") -> str:
+    if elem is None:
+        return default
+    child = elem.find(tag)
+    return child.get(attr, default) if child is not None else default
+
+
+def _elem_int(elem: ET.Element | None, tag: str) -> int | None:
+    """Return a child element's text as an int, or None if absent or unparseable."""
+    try:
+        return int(_elem_text(elem, tag).strip())
+    except (TypeError, ValueError):
+        return None
+
+
+def _elem_float(elem: ET.Element | None, tag: str) -> float | None:
+    """Return a child element's text as a float, or None if absent or unparseable."""
+    try:
+        return float(_elem_text(elem, tag).strip())
+    except (TypeError, ValueError):
+        return None
+
+
+def _task_to_dict(task: ET.Element, host_count: int | None = None) -> dict[str, Any]:
+    """Flatten a GMP <task> element.
+
+    severity and last_report_date come from the task's last report — gvmd sends no
+    task-level severity. host_count is supplied by the caller from the task's target
+    (see _target_host_counts); None anywhere means "unresolved", never zero.
+    """
     last_report_elem = task.find("last_report/report")
+    target_elem = task.find("target")
     return {
         "id": task.get("id", ""),
         "name": _elem_text(task, "name"),
         "status": _elem_text(task, "status"),
         "progress": _elem_text(task, "progress"),
         "last_report": last_report_elem.get("id", "") if last_report_elem is not None else "",
+        "last_report_date": _elem_text(last_report_elem, "timestamp"),
+        "severity": _elem_float(last_report_elem, "severity"),
+        "report_count": _elem_int(task, "report_count"),
+        "finished_report_count": _elem_int(task, "report_count/finished"),
+        "trend": _elem_text(task, "trend"),
+        "target_id": target_elem.get("id", "") if target_elem is not None else "",
+        "target_name": _elem_text(target_elem, "name"),
+        "host_count": host_count,
     }
 
 
@@ -89,8 +185,17 @@ def _target_to_dict(target: ET.Element) -> dict[str, Any]:
         "id": target.get("id", ""),
         "name": _elem_text(target, "name"),
         "hosts": _elem_text(target, "hosts"),
+        "exclude_hosts": _elem_text(target, "exclude_hosts"),
+        # gvmd computes max_hosts itself (CIDR ranges expanded); the bridge does not
+        # re-implement that arithmetic.
+        "host_count": _elem_int(target, "max_hosts"),
         "port_list": target.findtext("port_list/name", ""),
     }
+
+
+def _target_host_counts(response: ET.Element) -> dict[str, int | None]:
+    """Map target UUID to its host count, for joining onto tasks."""
+    return {t.get("id", ""): _elem_int(t, "max_hosts") for t in response.findall("target")}
 
 
 def _err(code: str, message: str) -> dict[str, Any]:
@@ -120,11 +225,89 @@ def _validate_name(value: str, field_name: str = "name") -> dict[str, Any] | Non
     return None
 
 
-def _validate_filter(value: str, field_name: str = "filter_string") -> dict[str, Any] | None:
+def _split_filter_terms(value: str) -> list[str] | None:
+    """Split a filter into whitespace-separated terms, honouring double quotes.
+
+    Returns None if a double quote is left open.
+    """
+    terms: list[str] = []
+    current: list[str] = []
+    in_quotes = False
+    for char in value:
+        if char == '"':
+            in_quotes = not in_quotes
+        elif char.isspace() and not in_quotes:
+            if current:
+                terms.append("".join(current))
+                current = []
+        else:
+            current.append(char)
+    if in_quotes:
+        return None
+    if current:
+        terms.append("".join(current))
+    return terms
+
+
+def _validate_filter_term(
+    term: str, field_name: str, keywords: frozenset[str]
+) -> dict[str, Any] | None:
+    """Validate one filter term, or None if it is acceptable."""
+    if term.lower() in _FILTER_BOOLEANS:
+        return None
+    match = _FILTER_TERM_RE.match(term)
+    if match is None:
+        # A bare word is a free-text search across the entity's text columns.
+        return None
+
+    keyword = match["keyword"]
+    value = match["value"]
+    if keyword not in keywords:
+        return _err(
+            "validation_error",
+            f"{field_name}: unsupported keyword {keyword!r} in term {term!r} — GVM would "
+            f"silently ignore it and return a wider result set. "
+            f"Supported keywords: {', '.join(sorted(keywords))}",
+        )
+    if keyword in _FILTER_DATE_COLUMNS and not _FILTER_DATE_RE.match(value):
+        return _err(
+            "validation_error",
+            f"{field_name}: {keyword!r} needs a date, got {value!r}. Use an absolute date "
+            f"(2026-08-01, 2026-08-01T14:30) or a relative offset (-30d); "
+            f"{_RELATIVE_UNITS_HELP}",
+        )
+    if (
+        keyword in _FILTER_NUMERIC_COLUMNS or keyword in _FILTER_NUMERIC_CONTROLS
+    ) and not _FILTER_NUMBER_RE.match(value):
+        return _err("validation_error", f"{field_name}: {keyword!r} needs a number, got {value!r}")
+    if keyword == "apply_overrides" and value not in ("0", "1"):
+        return _err(
+            "validation_error", f"{field_name}: 'apply_overrides' must be 0 or 1, got {value!r}"
+        )
+    if keyword in _FILTER_SORT_CONTROLS and value not in _FILTER_COLUMNS:
+        return _err(
+            "validation_error",
+            f"{field_name}: cannot sort by {value!r}. "
+            f"Sortable columns: {', '.join(sorted(_FILTER_COLUMNS))}",
+        )
+    return None
+
+
+def _validate_filter(
+    value: str,
+    field_name: str = "filter_string",
+    keywords: frozenset[str] = _FILTER_KEYWORDS,
+) -> dict[str, Any] | None:
     """Validate a GMP filter term.
 
     The value is not escaped here: python-gvm sets it as an XML attribute, which
     ElementTree escapes on serialisation.
+
+    Keywords and values are checked because gvmd discards a term it cannot parse
+    without reporting an error — the caller would get a silently wider result set and
+    no way to tell. Set MCP_FILTER_VALIDATION=warn to log rejections and pass the
+    filter through unchanged instead (escape hatch for a gvmd whose filter columns
+    differ from the ones this allowlist was verified against).
     """
     if len(value) > _MAX_FILTER_LEN:
         return _err(
@@ -132,6 +315,21 @@ def _validate_filter(value: str, field_name: str = "filter_string") -> dict[str,
         )
     if any(ord(c) < 0x20 or ord(c) == 0x7F for c in value):
         return _err("validation_error", f"{field_name} must not contain control characters")
+
+    terms = _split_filter_terms(value)
+    if terms is None:
+        return _err("validation_error", f"{field_name} has an unbalanced double quote")
+    for term in terms:
+        err = _validate_filter_term(term, field_name, keywords)
+        if err is None:
+            continue
+        if cfg.mcp_filter_validation == "warn":
+            logger.warning(
+                "filter term rejected but passed through (MCP_FILTER_VALIDATION=warn)",
+                extra={"term": term, "reason": err["message"]},
+            )
+            continue
+        return err
     return None
 
 
@@ -301,12 +499,33 @@ async def create_target(name: str, hosts: str, port_list_id: str = "") -> dict[s
 
 @mcp.tool()
 async def list_tasks(filter_string: str = "") -> list[dict[str, Any]] | dict[str, Any]:
-    """Return scan tasks (active and historical).
+    """Return scan tasks (active and historical), with severity, last-report and target info.
+
+    Each row carries: id, name, status, progress, last_report (report UUID),
+    last_report_date (ISO 8601), severity (of the last report), report_count,
+    finished_report_count, trend, target_id, target_name and host_count. A null
+    severity or host_count means "could not be resolved", not zero.
 
     Args:
         filter_string: Optional GMP filter term, e.g. "name~weekly", "status=Done",
-            "tag=reports rows=20". Empty returns GVM's default task list. GVM applies
-            a default page size; pass "rows=-1" to return every task.
+            "tag=reports rows=20". Empty returns GVM's default task list. Three things
+            about GMP filter syntax are easy to get wrong:
+
+            - Terms are combined with OR unless you write "and" between them, so
+              "severity>5 total<4" returns the union (more rows, not fewer). Write
+              "severity>5 and total<4" to intersect.
+            - Relative dates use s=seconds, m=minutes, h=hours, d=days, w=weeks,
+              M=months, y=years. "last<-1m" means "older than one minute" and matches
+              almost everything; "last<-1M" means "older than one month".
+            - GVM applies a default page size and caps it at 1000; pass "rows=-1" for
+              as many as GVM will return.
+
+            Example — tasks with a high-severity last report from over a month ago:
+            "severity>5 and last<-1M rows=-1".
+
+            An unsupported keyword or an unparseable value is rejected with
+            validation_error rather than passed on, because GVM would drop the term
+            silently and return a wider set than asked for.
     """
     identity = get_current_client()
     if not get_policy().is_tool_allowed("list_tasks", identity):
@@ -329,10 +548,14 @@ async def list_tasks(filter_string: str = "") -> list[dict[str, Any]] | dict[str
 
     def _call():
         with gmp_session() as gmp:
-            return gmp.get_tasks(filter_string=filter_string)
+            # Task XML carries the target's id and name but not its hosts, so the
+            # target list is fetched in the same session to resolve host_count.
+            return gmp.get_tasks(filter_string=filter_string), gmp.get_targets(
+                filter_string="rows=-1"
+            )
 
     try:
-        response = await asyncio.to_thread(_call)
+        response, targets_response = await asyncio.to_thread(_call)
     except GvmResponseError as e:
         logger.error("GMP response error", extra={"tool": "list_tasks", "error": str(e)})
         return _err("gvm_response_error", str(e))
@@ -345,7 +568,11 @@ async def list_tasks(filter_string: str = "") -> list[dict[str, Any]] | dict[str
     except OSError as e:
         logger.error("connection error", extra={"tool": "list_tasks", "error": str(e)})
         return _err("connection_error", _sanitize_os_error(e))
-    result = [_task_to_dict(t) for t in response.findall("task")]
+    host_counts = _target_host_counts(targets_response)
+    result = [
+        _task_to_dict(task, host_counts.get(_elem_attr(task, "target", "id")))
+        for task in response.findall("task")
+    ]
     logger.info(
         "tool completed",
         extra={
@@ -528,6 +755,9 @@ async def start_task(task_id: str) -> dict[str, Any]:
 async def get_scan_status(task_id: str, ctx: Context) -> dict[str, Any]:
     """Monitor a scan task, pushing progress notifications until it reaches a terminal state.
 
+    Returns the same row shape as list_tasks, including severity, last_report_date and
+    host_count.
+
     Args:
         task_id: UUID of the scan task.
     """
@@ -557,6 +787,11 @@ async def get_scan_status(task_id: str, ctx: Context) -> dict[str, Any]:
 
     deadline = asyncio.get_running_loop().time() + cfg.scan_poll_timeout
 
+    # Resolved from the task's target on the first poll only, then reused, so a long
+    # poll does not refetch an unchanging value every interval.
+    host_count: int | None = None
+    host_count_resolved = False
+
     while True:
         if asyncio.get_running_loop().time() >= deadline:
             logger.warning(
@@ -574,12 +809,31 @@ async def get_scan_status(task_id: str, ctx: Context) -> dict[str, Any]:
                 "use get_scan_status again to continue monitoring",
             )
 
-        def _fetch():
+        # host_count_resolved is bound as a default so each iteration captures its
+        # value at definition time rather than when the thread eventually runs.
+        def _fetch(resolve_host_count: bool = not host_count_resolved):
             with gmp_session() as gmp:
-                return gmp.get_task(task_id)
+                response = gmp.get_task(task_id)
+                if not resolve_host_count:
+                    return response, None
+                target_uuid = _elem_attr(response.find("task"), "target", "id")
+                if not target_uuid:
+                    return response, None
+                try:
+                    target = gmp.get_target(target_uuid).find("target")
+                except GvmError as target_err:
+                    # host_count is secondary here; monitoring must not stop because the
+                    # target is unreadable. list_tasks, where host_count is a headline
+                    # field, still fails loudly.
+                    logger.warning(
+                        "could not resolve target for host_count",
+                        extra={"tool": "get_scan_status", "error": str(target_err)},
+                    )
+                    return response, None
+                return response, _elem_int(target, "max_hosts")
 
         try:
-            response = await asyncio.to_thread(_fetch)
+            response, resolved_host_count = await asyncio.to_thread(_fetch)
         except OSError as e:
             logger.error(
                 "error polling scan status", extra={"tool": "get_scan_status", "error": str(e)}
@@ -595,7 +849,11 @@ async def get_scan_status(task_id: str, ctx: Context) -> dict[str, Any]:
         if task is None:
             return _err("not_found", f"Task {task_id} not found")
 
-        info = _task_to_dict(task)
+        if not host_count_resolved:
+            host_count = resolved_host_count
+            host_count_resolved = True
+
+        info = _task_to_dict(task, host_count)
         status = info["status"]
 
         try:

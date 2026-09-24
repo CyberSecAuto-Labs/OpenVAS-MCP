@@ -56,7 +56,17 @@ CIDR enforcement happens at `create_target` time, where hosts are explicitly def
 
 - **The concurrency limit counts only `status=Running`.** Tasks in `Requested` or `Queued` are not counted, so a burst of starts can briefly overshoot `max_concurrent_scans`. `start_task` makes this cheaper to trigger than `start_scan` did.
 
-- **`list_tasks` is paged by GVM.** With no `filter_string`, GVM applies the service account's default rows-per-page (100 on a stock install), so large deployments see a truncated list. Pass `rows=-1` for every task, or `rows=N` to page. A supplied filter replaces GVM's default filter wholesale rather than merging with it.
+- **`list_tasks` is paged by GVM.** With no `filter_string`, GVM applies the service account's default rows-per-page (100 on a stock install), so large deployments see a truncated list. Pass `rows=-1` for every task, or `rows=N` to page. Note that `rows=-1` is not literally unlimited: gvmd rewrites it to its maximum page size (1000 on a stock install). A supplied filter replaces GVM's default filter wholesale rather than merging with it.
+
+- **GMP filter terms are OR-ed unless joined with `and`.** `severity>5 total<4` returns the union of both terms — *more* rows than either alone — which reads as the filter having been ignored. This is GMP's own semantics; the server documents it in the `list_tasks` tool description but does not rewrite the caller's filter, since silently converting OR to AND would be exactly the kind of hidden behaviour the bridge avoids.
+
+- **Filter keywords are allowlisted because GVM drops unknown ones silently.** gvmd discards a filter term whose keyword it does not recognise (`zzzbogus<4`) or whose value it cannot parse (`last<yesterday`) without reporting an error and without any marker in the response — the caller gets a wider result set and no way to detect it. Acting on that (starting a batch of tasks, say) would hit the wrong set, so `_validate_filter` rejects those terms up front. The allowlist in `server.py` was verified term by term against a live gvmd; `progress`, `permission`, `alterable`, `in_use`, `observers`, `config`, `scanner`, `average_duration`, `overrides`, `notes`, `levels` and `timezone` are deliberately absent because gvmd ignores them for tasks. A gvmd whose columns differ can fall back to `MCP_FILTER_VALIDATION=warn`, which restores the silent behaviour.
+
+- **Relative filter dates use `m` for minutes and `M` for months.** `last<-1m` selects tasks whose last report is older than one *minute*, i.e. nearly all of them. The distinction is GMP's; the validator accepts both and the error message for an unparseable date spells the units out.
+
+- **Task severity is the last report's severity.** GVM sends no task-level severity element, so `list_tasks` reports `last_report/report/severity`. A task that has never completed a report has `severity: null` — not `0.0`, which would be indistinguishable from a genuinely clean scan.
+
+- **`host_count` comes from the target, not the task.** Task XML names a task's target but not its hosts, so `list_tasks` issues a second `get_targets` call in the same session and joins on target UUID, using gvmd's own computed `max_hosts` rather than re-implementing CIDR expansion. A target that was deleted, moved to the trashcan, or fell beyond gvmd's 1000-row page yields `host_count: null`. `get_scan_status` resolves its single target once and reuses the value for the rest of the poll.
 
 - **`get_scan_status` polls on a fixed interval.** The tool polls every 10 seconds with no push notification or webhook mechanism from GVM. It stops and returns a `"timeout"` error once the configurable deadline (`GVM_SCAN_POLL_TIMEOUT`, default 3600 s) is reached; call the tool again to resume monitoring.
 

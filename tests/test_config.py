@@ -19,6 +19,7 @@ def test_defaults(monkeypatch):
     monkeypatch.delenv("MCP_API_KEYS", raising=False)
     monkeypatch.delenv("MCP_POLICY_FILE", raising=False)
     monkeypatch.delenv("MCP_ALLOW_UNAUTHENTICATED", raising=False)
+    monkeypatch.delenv("MCP_FILTER_VALIDATION", raising=False)
 
     from openvas_mcp.config import Config
 
@@ -113,6 +114,28 @@ def test_mcp_transport_invalid(monkeypatch):
     from openvas_mcp.config import Config
 
     with pytest.raises(ValueError, match="MCP_TRANSPORT must be one of"):
+        Config.from_env()
+
+
+def test_mcp_filter_validation_default_is_strict(monkeypatch):
+    monkeypatch.delenv("MCP_FILTER_VALIDATION", raising=False)
+    from openvas_mcp.config import Config
+
+    assert Config.from_env().mcp_filter_validation == "strict"
+
+
+def test_mcp_filter_validation_warn(monkeypatch):
+    monkeypatch.setenv("MCP_FILTER_VALIDATION", "WARN")
+    from openvas_mcp.config import Config
+
+    assert Config.from_env().mcp_filter_validation == "warn"
+
+
+def test_mcp_filter_validation_invalid(monkeypatch):
+    monkeypatch.setenv("MCP_FILTER_VALIDATION", "off")
+    from openvas_mcp.config import Config
+
+    with pytest.raises(ValueError, match="MCP_FILTER_VALIDATION must be one of"):
         Config.from_env()
 
 

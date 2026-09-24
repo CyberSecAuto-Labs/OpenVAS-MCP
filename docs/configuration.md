@@ -31,6 +31,7 @@ All configuration is read from environment variables at startup. Invalid values 
 | `MCP_API_KEYS` | — | Bearer API keys for HTTP transport auth, as `token:name` pairs separated by commas (e.g. `tok1:agent,tok2:readonly`) |
 | `MCP_ALLOW_UNAUTHENTICATED` | — | Set to `1` to run HTTP transport without API key authentication — development only |
 | `MCP_POLICY_FILE` | — | Path to YAML authorization policy file; if unset, all authenticated clients have full access. Missing file = startup failure. |
+| `MCP_FILTER_VALIDATION` | `strict` | How `list_tasks` handles a GMP filter term GVM would not honour. `strict` returns `validation_error`; `warn` logs the term and passes the filter through unchanged. |
 
 > [!IMPORTANT]
 > If `MCP_API_KEYS` is not set and `MCP_ALLOW_UNAUTHENTICATED` is not explicitly set to `1`, the server will refuse to start. This prevents accidentally exposing the HTTP transport without auth.
@@ -41,6 +42,9 @@ All configuration is read from environment variables at startup. Invalid values 
 |---|---|---|
 | `GVM_SCAN_POLL_TIMEOUT` | `3600` | Maximum seconds `get_scan_status` will poll before returning a `timeout` error. Must be a positive integer. |
 | `GVM_REPORT_MAX_RESULTS` | `2000` | Maximum results returned by `fetch_scan_results`. `0` = unlimited. Truncated responses include `{"truncated": true, "cap": N}`. |
+
+> [!NOTE]
+> `MCP_FILTER_VALIDATION=warn` exists for a gvmd whose filter columns differ from the ones the allowlist in `server.py` was verified against. It restores GVM's silent term-dropping, so a filter that looks narrow can return everything — prefer `strict` and extend the allowlist instead.
 
 ## Logging
 

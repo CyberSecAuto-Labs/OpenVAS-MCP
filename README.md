@@ -133,6 +133,7 @@ GVM_PASSWORD=secret docker compose -f compose.yaml -f compose.override.yaml up -
 | `GVM_HOST` | — | Connect via TCP instead of socket (IPv4 and IPv6) |
 | `MCP_TRANSPORT` | `stdio` | `stdio`, `sse`, or `streamable-http` |
 | `MCP_API_KEYS` | — | Bearer API keys for HTTP transport auth (`token:name,...`) |
+| `MCP_FILTER_VALIDATION` | `strict` | `strict` rejects a filter term GVM would silently drop; `warn` logs it and passes it through |
 
 See [docs/configuration.md](docs/configuration.md) for the full reference, including TLS options, policy file, scan limits, and logging.
 
@@ -140,9 +141,9 @@ See [docs/configuration.md](docs/configuration.md) for the full reference, inclu
 
 | Tool | Description |
 |---|---|
-| `list_targets` | Return all scan targets |
+| `list_targets` | Return all scan targets, with host counts |
 | `create_target` | Create a target with specified hosts/CIDRs |
-| `list_tasks` | Return scan tasks, optionally narrowed with a GMP filter term |
+| `list_tasks` | Return scan tasks with severity, last-report and target info, optionally narrowed with a GMP filter term |
 | `start_scan` | Create and start a scan against a target |
 | `start_task` | Re-run an existing scan task by UUID |
 | `get_scan_status` | Poll status and progress of a running scan |
@@ -151,6 +152,31 @@ See [docs/configuration.md](docs/configuration.md) for the full reference, inclu
 **Example:** `"Scan 192.168.1.0/24 and show me anything above severity 7"` — the agent calls `create_target` → `start_scan` → `get_scan_status` → `fetch_scan_results(min_severity=7.0)`.
 
 **Example:** `"Re-run the weekly scan"` — the agent calls `list_tasks(filter_string="name~weekly")` to resolve the task UUID, then `start_task` → `get_scan_status` → `fetch_scan_results`. Unlike `start_scan`, this adds a report to the existing task's history instead of creating a duplicate task. GVM applies a default page size to `list_tasks`; pass `rows=-1` to return every task.
+
+**Example:** `"Re-run every single-host task whose last report is over a month old and scored above 5"` — a single `list_tasks` call returns every field those three criteria need, with no follow-up call to resolve host counts:
+
+```python
+list_tasks(filter_string="severity>5 and last<-1M rows=-1")
+# [{"id": "11111111-1111-1111-1111-111111111111", "name": "weekly-dmz-scan",
+#   "status": "Done", "progress": "-1",
+#   "last_report": "22222222-2222-2222-2222-222222222222",
+#   "last_report_date": "2026-08-14T02:15:00+02:00",
+#   "severity": 6.5, "report_count": 3, "finished_report_count": 3, "trend": "same",
+#   "target_id": "33333333-3333-3333-3333-333333333333",
+#   "target_name": "dmz-web-01", "host_count": 1}, …]
+```
+
+The agent then keeps the rows with `host_count == 1` and calls `start_task` on each. A `null` `severity` or `host_count` means *unresolved* (no report yet, or the target is gone), never zero.
+
+### GMP filter syntax
+
+Three things about GMP filters are easy to get wrong, so `list_tasks` documents them in its tool description and rejects what GVM would quietly mishandle:
+
+| | |
+|---|---|
+| **Terms OR by default** | `severity>5 total<4` returns the *union* — more rows, not fewer. Write `severity>5 and total<4` to intersect. |
+| **`m` is minutes, `M` is months** | `last<-1m` means "older than one minute" and matches nearly everything. Use `last<-1M`. Units: `s m h d w M y`. |
+| **Unknown terms are dropped, not rejected** | GVM silently ignores `zzzbogus<4` and returns every task. The server rejects unsupported keywords and unparseable values with `validation_error` instead — set `MCP_FILTER_VALIDATION=warn` to pass them through. |
 
 ## Release integrity
 

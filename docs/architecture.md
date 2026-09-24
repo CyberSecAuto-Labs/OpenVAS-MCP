@@ -30,7 +30,7 @@ openvas_mcp/
 
 1. AI agent calls an MCP tool (e.g. `start_scan`)
 2. `server.py` checks that the tool is allowed by the policy (always permitted for stdio — identity is `None`, default policy is permissive)
-3. Input is validated at the tool boundary (UUID format, string length, value ranges)
+3. Input is validated at the tool boundary (UUID format, string length, value ranges, and GMP filter keywords and value grammar — GVM drops filter terms it does not understand without reporting an error)
 4. `gmp_session()` opens a connection to GVM and authenticates with the service account
 5. The GMP method is called; the response is an XML `ElementTree`
 6. The tool parses the XML into a plain Python dict and returns it
