@@ -84,7 +84,7 @@ A `Policy` object is loaded from `MCP_POLICY_FILE` at startup and installed as a
 
 - **Tool-level allow/deny** — each client has an `allowed_tools` list (`["*"]` for all)
 - **CIDR target restriction** — `create_target` validates every host/CIDR in the request against the client's `allowed_cidrs`; non-CIDR entries are treated as fnmatch hostname patterns (e.g. `*.internal`, `db.prod`)
-- **Concurrent scan limit** — `start_scan` counts active tasks before creating a new one when `max_concurrent_scans > 0`; this count is GVM-global, not per-client — scans started outside of MCP (e.g. via the GVM UI) consume the same capacity
+- **Concurrent scan limit** — `start_scan` and `start_task` count active tasks before starting one when `max_concurrent_scans > 0`; this count is GVM-global, not per-client — scans started outside of MCP (e.g. via the GVM UI) consume the same capacity
 
 Clients not listed in the policy fall back to the `default` block. If `MCP_POLICY_FILE` is unset, the default policy permits everything. If it is set but the file is missing, startup fails with an error.
 

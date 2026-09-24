@@ -142,12 +142,15 @@ See [docs/configuration.md](docs/configuration.md) for the full reference, inclu
 |---|---|
 | `list_targets` | Return all scan targets |
 | `create_target` | Create a target with specified hosts/CIDRs |
-| `list_tasks` | Return all scan tasks |
+| `list_tasks` | Return scan tasks, optionally narrowed with a GMP filter term |
 | `start_scan` | Create and start a scan against a target |
+| `start_task` | Re-run an existing scan task by UUID |
 | `get_scan_status` | Poll status and progress of a running scan |
 | `fetch_scan_results` | Retrieve findings, optionally filtered by minimum severity |
 
 **Example:** `"Scan 192.168.1.0/24 and show me anything above severity 7"` — the agent calls `create_target` → `start_scan` → `get_scan_status` → `fetch_scan_results(min_severity=7.0)`.
+
+**Example:** `"Re-run the weekly scan"` — the agent calls `list_tasks(filter_string="name~weekly")` to resolve the task UUID, then `start_task` → `get_scan_status` → `fetch_scan_results`. Unlike `start_scan`, this adds a report to the existing task's history instead of creating a duplicate task. GVM applies a default page size to `list_tasks`; pass `rows=-1` to return every task.
 
 ## Release integrity
 

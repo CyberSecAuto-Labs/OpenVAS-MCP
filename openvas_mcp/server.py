@@ -13,7 +13,7 @@ from mcp.server.mcpserver import Context, MCPServer
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
-from .auth import get_current_client
+from .auth import ClientIdentity, get_current_client
 from .config import cfg
 from .gvm_client import gmp_session
 from .policy import get_policy
@@ -28,6 +28,7 @@ KNOWN_TOOLS: frozenset[str] = frozenset(
     {
         "create_target",
         "start_scan",
+        "start_task",
         "get_scan_status",
         "fetch_scan_results",
         "list_targets",
@@ -35,8 +36,10 @@ KNOWN_TOOLS: frozenset[str] = frozenset(
     }
 )
 
-# Serialises the check-and-start sequence in start_scan to prevent a TOCTOU
-# race where concurrent callers all observe active < max_scans and all proceed.
+# Serialises the check-and-start sequence in start_scan and start_task to
+# prevent a TOCTOU race where concurrent callers all observe active < max_scans
+# and all proceed. Process-local: it does not serialise across replicas, nor
+# against scans started outside MCP.
 _scan_start_lock = asyncio.Lock()
 
 
@@ -49,6 +52,13 @@ _UUID_RE = re.compile(
     r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
     re.IGNORECASE,
 )
+
+_MAX_FILTER_LEN = 1000
+
+# Task states GVM refuses to start from. A denylist rather than an allowlist of
+# startable states, so a status a future gvmd adds falls through to GVM, which
+# is authoritative either way.
+_ACTIVE_TASK_STATES = frozenset({"Requested", "Queued", "Running", "Stop Requested", "Processing"})
 
 
 # ---------------------------------------------------------------------------
@@ -108,6 +118,42 @@ def _validate_name(value: str, field_name: str = "name") -> dict[str, Any] | Non
     if any(ord(c) < 0x20 or ord(c) == 0x7F for c in value):
         return _err("validation_error", f"{field_name} must not contain control characters")
     return None
+
+
+def _validate_filter(value: str, field_name: str = "filter_string") -> dict[str, Any] | None:
+    """Validate a GMP filter term.
+
+    The value is not escaped here: python-gvm sets it as an XML attribute, which
+    ElementTree escapes on serialisation.
+    """
+    if len(value) > _MAX_FILTER_LEN:
+        return _err(
+            "validation_error", f"{field_name} must be {_MAX_FILTER_LEN} characters or fewer"
+        )
+    if any(ord(c) < 0x20 or ord(c) == 0x7F for c in value):
+        return _err("validation_error", f"{field_name} must not contain control characters")
+    return None
+
+
+def _concurrency_error(
+    gmp: Any, identity: ClientIdentity | None, tool: str
+) -> dict[str, Any] | None:
+    """Return a rate_limited error if the GVM-global active-scan limit is reached.
+
+    Called from inside the worker thread, under _scan_start_lock.
+    """
+    max_scans = get_policy().max_concurrent_scans(identity)
+    if max_scans <= 0:
+        return None
+    running_resp = gmp.get_tasks(filter_string="status=Running")
+    if len(running_resp.findall("task")) < max_scans:
+        return None
+    logger.warning("concurrent scan limit reached", extra={"tool": tool, "limit": max_scans})
+    return _err(
+        "rate_limited",
+        f"Maximum concurrent scans ({max_scans}) reached "
+        f"(this is a GVM-global count, not limited to this MCP session)",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -254,8 +300,14 @@ async def create_target(name: str, hosts: str, port_list_id: str = "") -> dict[s
 
 
 @mcp.tool()
-async def list_tasks() -> list[dict[str, Any]] | dict[str, Any]:
-    """Return all scan tasks (active and historical)."""
+async def list_tasks(filter_string: str = "") -> list[dict[str, Any]] | dict[str, Any]:
+    """Return scan tasks (active and historical).
+
+    Args:
+        filter_string: Optional GMP filter term, e.g. "name~weekly", "status=Done",
+            "tag=reports rows=20". Empty returns GVM's default task list. GVM applies
+            a default page size; pass "rows=-1" to return every task.
+    """
     identity = get_current_client()
     if not get_policy().is_tool_allowed("list_tasks", identity):
         logger.warning(
@@ -263,14 +315,21 @@ async def list_tasks() -> list[dict[str, Any]] | dict[str, Any]:
             extra={"tool": "list_tasks", "client_id": identity.client_id if identity else "stdio"},
         )
         return _err("forbidden", "Operation not permitted")
+    filter_string = filter_string.strip()
     logger.info(
         "tool invoked",
-        extra={"tool": "list_tasks", "client_id": identity.client_id if identity else "stdio"},
+        extra={
+            "tool": "list_tasks",
+            "params": {"filter_string": filter_string},
+            "client_id": identity.client_id if identity else "stdio",
+        },
     )
+    if filter_string and (err := _validate_filter(filter_string)):
+        return err
 
     def _call():
         with gmp_session() as gmp:
-            return gmp.get_tasks()
+            return gmp.get_tasks(filter_string=filter_string)
 
     try:
         response = await asyncio.to_thread(_call)
@@ -341,22 +400,10 @@ async def start_scan(
     FULL_AND_FAST = "daba56c8-73ec-11df-a475-002264764cea"
     DEFAULT_SCANNER = "08b69003-5fc2-4037-a479-93b440211c73"
 
-    def _check_and_start():
+    def _check_and_start() -> tuple[str | None, dict[str, Any] | None]:
         with gmp_session() as gmp:
-            max_scans = get_policy().max_concurrent_scans(identity)
-            if max_scans > 0:
-                running_resp = gmp.get_tasks(filter_string="status=Running")
-                active = len(running_resp.findall("task"))
-                if active >= max_scans:
-                    logger.warning(
-                        "concurrent scan limit reached",
-                        extra={"tool": "start_scan", "limit": max_scans},
-                    )
-                    return None, _err(
-                        "rate_limited",
-                        f"Maximum concurrent scans ({max_scans}) reached "
-                        f"(this is a GVM-global count, not limited to this MCP session)",
-                    )
+            if limit_err := _concurrency_error(gmp, identity, "start_scan"):
+                return None, limit_err
             task = gmp.create_task(
                 name=name,
                 config_id=scan_config_id or FULL_AND_FAST,
@@ -393,6 +440,81 @@ async def start_scan(
         "tool completed",
         extra={
             "tool": "start_scan",
+            "status": "ok",
+            "client_id": identity.client_id if identity else "stdio",
+        },
+    )
+    return result
+
+
+@mcp.tool()
+async def start_task(task_id: str) -> dict[str, Any]:
+    """Start (re-run) an existing scan task, adding a new report to its history.
+
+    Unlike start_scan, this creates no new task. Use list_tasks (optionally with a
+    filter_string) to find the task UUID.
+
+    Args:
+        task_id: UUID of the existing scan task to start.
+    """
+    identity = get_current_client()
+    if not get_policy().is_tool_allowed("start_task", identity):
+        logger.warning(
+            "operation denied",
+            extra={"tool": "start_task", "client_id": identity.client_id if identity else "stdio"},
+        )
+        return _err("forbidden", "Operation not permitted")
+    logger.info(
+        "tool invoked",
+        extra={
+            "tool": "start_task",
+            "params": {"task_id": task_id},
+            "client_id": identity.client_id if identity else "stdio",
+        },
+    )
+    if err := _validate_uuid(task_id, "task_id"):
+        return err
+
+    def _check_and_start() -> tuple[str | None, dict[str, Any] | None]:
+        with gmp_session() as gmp:
+            if limit_err := _concurrency_error(gmp, identity, "start_task"):
+                return None, limit_err
+            task = gmp.get_task(task_id).find("task")
+            if task is None:
+                return None, _err("not_found", f"Task {task_id} not found")
+            # Advisory only: GVM is authoritative and may still reject the start if
+            # the status changes between this read and start_task.
+            status = _elem_text(task, "status")
+            if status in _ACTIVE_TASK_STATES:
+                return None, _err(
+                    "conflict", f"Task {task_id} is already active (status: {status})"
+                )
+            return gmp.start_task(task_id).findtext("report_id", ""), None
+
+    try:
+        async with _scan_start_lock:
+            report_id, err = await asyncio.to_thread(_check_and_start)
+    except GvmResponseError as e:
+        logger.error("GMP response error", extra={"tool": "start_task", "error": str(e)})
+        return _err("gvm_response_error", str(e))
+    except GvmServerError as e:
+        logger.error("GMP server error", extra={"tool": "start_task", "error": str(e)})
+        return _err("gvm_server_error", str(e))
+    except GvmError as e:
+        logger.error("GMP error", extra={"tool": "start_task", "error": str(e)})
+        return _err("gvm_error", str(e))
+    except OSError as e:
+        logger.error("connection error", extra={"tool": "start_task", "error": str(e)})
+        return _err("connection_error", _sanitize_os_error(e))
+
+    if err:
+        return err
+
+    result = {"task_id": task_id, "report_id": report_id, "status": "started"}
+    logger.info(
+        "tool completed",
+        extra={
+            "tool": "start_task",
             "status": "ok",
             "client_id": identity.client_id if identity else "stdio",
         },
