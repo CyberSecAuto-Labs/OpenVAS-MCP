@@ -60,6 +60,21 @@ def _target_xml(
     return root
 
 
+def _targets_page_xml(targets: list[tuple[str, str]], start: int, filtered: int) -> ET.Element:
+    """One page of get_targets, with the paging elements gvmd sends."""
+    rows = "".join(
+        f'<target id="{tid}"><name>t</name><max_hosts>{max_hosts}</max_hosts></target>'
+        for tid, max_hosts in targets
+    )
+    return ET.fromstring(
+        f"<get_targets_response>{rows}"
+        f'<targets start="{start}" max="1000"/>'
+        f"<target_count>{filtered}<filtered>{filtered}</filtered>"
+        f"<page>{len(targets)}</page></target_count>"
+        f"</get_targets_response>"
+    )
+
+
 def _task_xml(
     tid: str = _VALID_UUID,
     name: str = "test-task",
@@ -354,7 +369,44 @@ class TestListTasks:
         gmp_session_mock.get_tasks.return_value = _task_xml()
         gmp_session_mock.get_targets.return_value = _target_xml()
         await list_tasks()
-        gmp_session_mock.get_targets.assert_called_once_with(filter_string="rows=-1")
+        gmp_session_mock.get_targets.assert_called_once_with(filter_string="rows=-1 first=1")
+
+    async def test_host_count_resolved_past_the_row_cap(self, gmp_session_mock):
+        """gvmd clamps rows=-1 (1000 by default); later pages must still resolve."""
+        gmp_session_mock.get_tasks.return_value = _task_xml(target_id=_VALID_UUID2)
+        gmp_session_mock.get_targets.side_effect = [
+            _targets_page_xml([(_VALID_UUID, "1")], start=1, filtered=2),
+            _targets_page_xml([(_VALID_UUID2, "254")], start=2, filtered=2),
+        ]
+        row = (await list_tasks())[0]
+        assert row["host_count"] == 254
+        assert [c.kwargs for c in gmp_session_mock.get_targets.call_args_list] == [
+            {"filter_string": "rows=-1 first=1"},
+            {"filter_string": "rows=-1 first=2"},
+        ]
+
+    async def test_target_paging_stops_when_gvmd_restarts_at_first_page(self, gmp_session_mock):
+        """gvmd answers a first= past the end with page one again, never an empty page."""
+        gmp_session_mock.get_tasks.return_value = _task_xml()
+        gmp_session_mock.get_targets.side_effect = [
+            _targets_page_xml([(_VALID_UUID, "1")], start=1, filtered=3),
+            _targets_page_xml([(_VALID_UUID, "1")], start=1, filtered=3),
+        ]
+        row = (await list_tasks())[0]
+        assert row["host_count"] == 1
+        assert gmp_session_mock.get_targets.call_count == 2
+
+    async def test_unreadable_targets_degrade_to_null_host_count(self, gmp_session_mock):
+        """An account that can read tasks but not targets keeps list_tasks."""
+        from gvm.errors import GvmResponseError
+
+        gmp_session_mock.get_tasks.return_value = _task_xml()
+        gmp_session_mock.get_targets.side_effect = GvmResponseError("403", "permission denied")
+        rows = await list_tasks()
+        assert isinstance(rows, list)
+        assert rows[0]["id"] == _VALID_UUID
+        assert rows[0]["severity"] == 7.5
+        assert rows[0]["host_count"] is None
 
     async def test_unsupported_filter_keyword_rejected(self, gmp_session_mock):
         result = await list_tasks(filter_string="zzzbogus<4")
@@ -781,6 +833,20 @@ class TestGetScanStatus:
         assert result["status"] == "Done"
         assert result["host_count"] is None
 
+    async def test_failed_target_resolution_retried_on_next_poll(self, gmp_session_mock):
+        """A transient failure must not pin host_count to null for the whole poll."""
+        from gvm.errors import GvmError
+
+        running = _task_xml(status="Running")
+        gmp_session_mock.get_task.side_effect = [running, running, _task_xml(status="Done")]
+        gmp_session_mock.get_target.side_effect = [GvmError("transient"), _target_xml()]
+
+        with patch("asyncio.sleep", new_callable=AsyncMock):
+            result = await get_scan_status(_VALID_UUID, _make_ctx())
+
+        assert result["host_count"] == 1
+        assert gmp_session_mock.get_target.call_count == 2
+
     async def test_task_without_target_skips_target_lookup(self, gmp_session_mock):
         gmp_session_mock.get_task.return_value = ET.fromstring(f"""
         <get_tasks_response>
@@ -816,6 +882,8 @@ class TestValidateFilter:
             "last<2026-08-01",
             "last<2026-08-01T14:30",
             "last<2026-08-01T14:30:00",
+            'last<"2026-08-01 14:30"',
+            "created<2024-02-29",  # leap day
             "created>-30d",
             "modified<-1m",  # minutes: odd, but valid GMP
             "rows=-1",
@@ -847,6 +915,27 @@ class TestValidateFilter:
             ("last<-1x", "date"),
             ("last<yesterday", "date"),
             ("created>lastweek", "date"),
+            # Well-shaped but not real: gvmd compares these against a nonsense value,
+            # so "<" matches every task.
+            ("last<2026-13-01", "date"),
+            ("last<2026-00-10", "date"),
+            ("last<2026-02-30", "date"),
+            ("created<2025-02-29", "date"),  # not a leap year
+            ("last<2026-08-14T25:00", "date"),
+            ("last<2026-08-14T23:60", "date"),
+            ("last<2026-08-14T23:59:60", "date"),
+            # gvmd parses these but discards the offset, reading the wall-clock part in
+            # its own timezone — Z and +05:00 select the same rows as no offset at all.
+            ("last<2026-08-14T02:15:00+02:00", "UTC offset"),
+            ("last<2026-08-14T02:15:00+0200", "UTC offset"),
+            ("last<2026-08-14T02:15:00Z", "UTC offset"),
+            ("last<2026-08-14T02:15Z", "UTC offset"),
+            ("last<2026-08-14T02:15:00-05:30", "UTC offset"),
+            ("last<2026-08-14T02:15:00.123Z", "date"),
+            # Accepted by datetime.fromisoformat from 3.11, but not an ISO date to gvmd.
+            ("last<20260814", "date"),
+            ("last<2026-W33", "date"),
+            ("last<2026-08-14T02:15:00+02", "date"),
             ("severity>high", "number"),
             ("rows=all", "number"),
             ("min_qod=high", "number"),
@@ -862,6 +951,22 @@ class TestValidateFilter:
         assert err is not None
         assert err["code"] == "validation_error"
         assert expected_in_message in err["message"]
+
+    async def test_emitted_last_report_date_is_rejected_with_the_value_to_use(
+        self, gmp_session_mock
+    ):
+        from openvas_mcp.server import _validate_filter
+
+        gmp_session_mock.get_tasks.return_value = _task_xml()
+        gmp_session_mock.get_targets.return_value = _target_xml()
+        emitted = (await list_tasks())[0]["last_report_date"]
+        assert emitted == "2026-01-30T17:25:28+01:00"
+        err = _validate_filter(f"last<{emitted}")
+        assert err is not None
+        assert "UTC offset" in err["message"]
+        # The error names the exact value to send instead, and that value is accepted.
+        assert "'2026-01-30T17:25:28'" in err["message"]
+        assert _validate_filter("last<2026-01-30T17:25:28") is None
 
     def test_date_error_explains_month_versus_minute_units(self):
         from openvas_mcp.server import _validate_filter

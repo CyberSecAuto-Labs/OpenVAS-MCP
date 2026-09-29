@@ -158,6 +158,33 @@ class TestListTasks:
         assert result.get("error") is True
         assert result["code"] == "validation_error"
 
+    async def test_invalid_calendar_date_returns_validation_error(self):
+        """gvmd evaluates last<2026-13-01 as true for every task instead of rejecting it."""
+        result = await list_tasks(filter_string="last<2026-13-01")
+        assert result.get("error") is True
+        assert result["code"] == "validation_error"
+
+    async def test_emitted_last_report_date_needs_its_offset_dropped(self):
+        """gvmd discards a UTC offset in a filter value, so the bridge rejects one; the
+        wall-clock part the error suggests must then be accepted."""
+        result = await list_tasks(filter_string="status=Done rows=20")
+        dated = [t for t in result if t["last_report_date"]]
+        if not dated:
+            pytest.skip("no completed tasks with a report on this GVM")
+        emitted = dated[0]["last_report_date"]
+        rejected = await list_tasks(filter_string=f"last<{emitted}")
+        assert rejected.get("error") is True
+        assert "UTC offset" in rejected["message"]
+        wall_clock = emitted[:19]
+        assert isinstance(await list_tasks(filter_string=f"last<{wall_clock} rows=1"), list)
+
+    async def test_every_target_resolved_for_the_host_count_join(self, gvm):
+        """The join pages past gvmd's row cap, so it sees every target gvmd counts."""
+        from openvas_mcp.server import _fetch_target_host_counts
+
+        filtered = int(gvm.get_targets(filter_string="rows=1").findtext("target_count/filtered"))
+        assert len(_fetch_target_host_counts(gvm)) == filtered
+
     async def test_compound_filter_narrows_the_result_set(self):
         """The acceptance query: an explicit `and` must intersect, not widen."""
         by_severity = await list_tasks(filter_string="severity>5 rows=-1")

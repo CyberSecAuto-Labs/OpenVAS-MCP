@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import datetime
 import logging
 import re
 import xml.etree.ElementTree as ET
@@ -105,8 +106,22 @@ _FILTER_BOOLEANS = frozenset({"and", "or", "not"})
 
 _FILTER_TERM_RE = re.compile(r"^(?P<keyword>[A-Za-z_][A-Za-z0-9_-]*)(?P<op>!?[=~<>])(?P<value>.*)$")
 _FILTER_NUMBER_RE = re.compile(r"^[+-]?(\d+(\.\d*)?|\.\d+)$")
-# Absolute (2026-08-01, 2026-08-01T14:30[:00]) or relative (-30d) — see _RELATIVE_UNITS_HELP.
-_FILTER_DATE_RE = re.compile(r"^(\d{4}-\d{2}-\d{2}([T ]\d{2}:\d{2}(:\d{2})?)?|[+-]?\d+[smhdwMy])$")
+# Absolute dates: 2026-08-01 or 2026-08-01T14:30[:00]. The shape is matched here and
+# the calendar/clock values are range-checked in _filter_date_error, because gvmd
+# evaluates an out-of-range date such as 2026-13-01 against a nonsense value instead of
+# rejecting it. datetime.fromisoformat is not used for the shape: from Python 3.11 it
+# accepts compact forms (20260801, 2026-W31) that gvmd reads differently.
+#
+# A trailing Z or UTC offset is matched only so it can be rejected with a specific
+# message: gvmd parses the term but discards the offset and reads the wall-clock part
+# in its own timezone, so 14:30Z and 14:30+05:00 select the same rows as 14:30.
+_FILTER_DATE_ABS_RE = re.compile(
+    r"^(?P<year>\d{4})-(?P<month>\d{2})-(?P<day>\d{2})"
+    r"(?:[T ](?P<hour>\d{2}):(?P<minute>\d{2})(?::(?P<second>\d{2}))?"
+    r"(?P<offset>Z|[+-]\d{2}:?\d{2})?)?$"
+)
+# Relative offsets (-30d) — see _RELATIVE_UNITS_HELP.
+_FILTER_DATE_REL_RE = re.compile(r"^[+-]?\d+[smhdwMy]$")
 
 _RELATIVE_UNITS_HELP = (
     "relative units are s=seconds, m=minutes, h=hours, d=days, w=weeks, M=months, "
@@ -198,6 +213,30 @@ def _target_host_counts(response: ET.Element) -> dict[str, int | None]:
     return {t.get("id", ""): _elem_int(t, "max_hosts") for t in response.findall("target")}
 
 
+def _fetch_target_host_counts(gmp: Any) -> dict[str, int | None]:
+    """Map every target's UUID to its host count, paging past gvmd's row cap.
+
+    gvmd clamps rows=-1 to the account's Max Rows Per Page (1000 by default), so
+    pages are requested until <target_count><filtered> is reached. The loop never
+    waits for an empty page: gvmd answers a first= beyond the end by silently
+    restarting at first=1, so it also stops if <targets start> is not the offset
+    that was asked for.
+    """
+    counts: dict[str, int | None] = {}
+    first = 1
+    while True:
+        response = gmp.get_targets(filter_string=f"rows=-1 first={first}")
+        page = response.findall("target")
+        counts.update(_target_host_counts(response))
+        total = _elem_int(response, "target_count/filtered")
+        start = _elem_attr(response, "targets", "start")
+        if not page or total is None or start not in ("", str(first)):
+            return counts
+        first += len(page)
+        if first > total:
+            return counts
+
+
 def _err(code: str, message: str) -> dict[str, Any]:
     """Return a structured error dict."""
     return {"error": True, "code": code, "message": message}
@@ -249,6 +288,33 @@ def _split_filter_terms(value: str) -> list[str] | None:
     return terms
 
 
+def _filter_date_error(value: str) -> str | None:
+    """Return why value is not a usable date for gvmd, or None if it is."""
+    if _FILTER_DATE_REL_RE.match(value):
+        return None
+    match = _FILTER_DATE_ABS_RE.match(value)
+    invalid = (
+        f"needs a valid date, got {value!r}. Use an absolute date (2026-08-01, "
+        f"2026-08-01T14:30) or a relative offset (-30d); {_RELATIVE_UNITS_HELP}"
+    )
+    if match is None:
+        return invalid
+    try:
+        datetime.date(int(match["year"]), int(match["month"]), int(match["day"]))
+        if match["hour"] is not None:
+            datetime.time(int(match["hour"]), int(match["minute"]), int(match["second"] or 0))
+    except ValueError:
+        return invalid
+    if match["offset"] is not None:
+        return (
+            f"value {value!r} carries a UTC offset, which GVM ignores — it reads the "
+            f"wall-clock part in its own timezone, so the filter would select different "
+            f"rows than the offset implies. Drop the offset "
+            f"({value[: match.start('offset')]!r}) or use a relative offset (-30d)"
+        )
+    return None
+
+
 def _validate_filter_term(
     term: str, field_name: str, keywords: frozenset[str]
 ) -> dict[str, Any] | None:
@@ -269,13 +335,8 @@ def _validate_filter_term(
             f"silently ignore it and return a wider result set. "
             f"Supported keywords: {', '.join(sorted(keywords))}",
         )
-    if keyword in _FILTER_DATE_COLUMNS and not _FILTER_DATE_RE.match(value):
-        return _err(
-            "validation_error",
-            f"{field_name}: {keyword!r} needs a date, got {value!r}. Use an absolute date "
-            f"(2026-08-01, 2026-08-01T14:30) or a relative offset (-30d); "
-            f"{_RELATIVE_UNITS_HELP}",
-        )
+    if keyword in _FILTER_DATE_COLUMNS and (reason := _filter_date_error(value)):
+        return _err("validation_error", f"{field_name}: {keyword!r} {reason}")
     if (
         keyword in _FILTER_NUMERIC_COLUMNS or keyword in _FILTER_NUMERIC_CONTROLS
     ) and not _FILTER_NUMBER_RE.match(value):
@@ -508,7 +569,7 @@ async def list_tasks(filter_string: str = "") -> list[dict[str, Any]] | dict[str
 
     Args:
         filter_string: Optional GMP filter term, e.g. "name~weekly", "status=Done",
-            "tag=reports rows=20". Empty returns GVM's default task list. Three things
+            "tag=reports rows=20". Empty returns GVM's default task list. Four things
             about GMP filter syntax are easy to get wrong:
 
             - Terms are combined with OR unless you write "and" between them, so
@@ -517,8 +578,13 @@ async def list_tasks(filter_string: str = "") -> list[dict[str, Any]] | dict[str
             - Relative dates use s=seconds, m=minutes, h=hours, d=days, w=weeks,
               M=months, y=years. "last<-1m" means "older than one minute" and matches
               almost everything; "last<-1M" means "older than one month".
-            - GVM applies a default page size and caps it at 1000; pass "rows=-1" for
-              as many as GVM will return.
+            - Absolute dates take no UTC offset, because GVM ignores it. Drop the
+              "+02:00" from a last_report_date before reusing it in a filter
+              ("last<2026-08-14T02:15:00"); times are minute-resolution.
+            - GVM merges your filter with its defaults rather than replacing them, so
+              "name~x" still returns only one page (the account's Rows Per Page).
+              Pass "rows=-1" for as many as GVM will return — it caps rows at the
+              account's Max Rows Per Page, typically 1000.
 
             Example — tasks with a high-severity last report from over a month ago:
             "severity>5 and last<-1M rows=-1".
@@ -546,16 +612,25 @@ async def list_tasks(filter_string: str = "") -> list[dict[str, Any]] | dict[str
     if filter_string and (err := _validate_filter(filter_string)):
         return err
 
-    def _call():
+    def _call() -> tuple[ET.Element, dict[str, int | None]]:
         with gmp_session() as gmp:
+            response = gmp.get_tasks(filter_string=filter_string)
             # Task XML carries the target's id and name but not its hosts, so the
             # target list is fetched in the same session to resolve host_count.
-            return gmp.get_tasks(filter_string=filter_string), gmp.get_targets(
-                filter_string="rows=-1"
-            )
+            try:
+                return response, _fetch_target_host_counts(gmp)
+            except GvmError as target_err:
+                # An account that can read tasks but not targets still gets its task
+                # list; host_count degrades to null ("unresolved"), as in
+                # get_scan_status.
+                logger.warning(
+                    "could not resolve targets for host_count",
+                    extra={"tool": "list_tasks", "error": str(target_err)},
+                )
+                return response, {}
 
     try:
-        response, targets_response = await asyncio.to_thread(_call)
+        response, host_counts = await asyncio.to_thread(_call)
     except GvmResponseError as e:
         logger.error("GMP response error", extra={"tool": "list_tasks", "error": str(e)})
         return _err("gvm_response_error", str(e))
@@ -568,7 +643,6 @@ async def list_tasks(filter_string: str = "") -> list[dict[str, Any]] | dict[str
     except OSError as e:
         logger.error("connection error", extra={"tool": "list_tasks", "error": str(e)})
         return _err("connection_error", _sanitize_os_error(e))
-    host_counts = _target_host_counts(targets_response)
     result = [
         _task_to_dict(task, host_counts.get(_elem_attr(task, "target", "id")))
         for task in response.findall("task")
@@ -787,10 +861,10 @@ async def get_scan_status(task_id: str, ctx: Context) -> dict[str, Any]:
 
     deadline = asyncio.get_running_loop().time() + cfg.scan_poll_timeout
 
-    # Resolved from the task's target on the first poll only, then reused, so a long
-    # poll does not refetch an unchanging value every interval.
+    # Resolved from the task's target once, then reused, so a long poll does not refetch
+    # an unchanging value every interval. A failed resolution is retried on the next
+    # poll rather than pinning null for the rest of it.
     host_count: int | None = None
-    host_count_resolved = False
 
     while True:
         if asyncio.get_running_loop().time() >= deadline:
@@ -809,9 +883,9 @@ async def get_scan_status(task_id: str, ctx: Context) -> dict[str, Any]:
                 "use get_scan_status again to continue monitoring",
             )
 
-        # host_count_resolved is bound as a default so each iteration captures its
+        # resolve_host_count is bound as a default so each iteration captures its
         # value at definition time rather than when the thread eventually runs.
-        def _fetch(resolve_host_count: bool = not host_count_resolved):
+        def _fetch(resolve_host_count: bool = host_count is None):
             with gmp_session() as gmp:
                 response = gmp.get_task(task_id)
                 if not resolve_host_count:
@@ -822,9 +896,8 @@ async def get_scan_status(task_id: str, ctx: Context) -> dict[str, Any]:
                 try:
                     target = gmp.get_target(target_uuid).find("target")
                 except GvmError as target_err:
-                    # host_count is secondary here; monitoring must not stop because the
-                    # target is unreadable. list_tasks, where host_count is a headline
-                    # field, still fails loudly.
+                    # host_count is secondary; monitoring must not stop because the
+                    # target is unreadable. list_tasks degrades the same way.
                     logger.warning(
                         "could not resolve target for host_count",
                         extra={"tool": "get_scan_status", "error": str(target_err)},
@@ -849,9 +922,8 @@ async def get_scan_status(task_id: str, ctx: Context) -> dict[str, Any]:
         if task is None:
             return _err("not_found", f"Task {task_id} not found")
 
-        if not host_count_resolved:
+        if host_count is None:
             host_count = resolved_host_count
-            host_count_resolved = True
 
         info = _task_to_dict(task, host_count)
         status = info["status"]
