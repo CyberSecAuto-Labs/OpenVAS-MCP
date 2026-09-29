@@ -277,9 +277,19 @@ class TestStartScan:
         gmp_session_mock.create_task.return_value = ET.fromstring(
             f'<create_task_response id="{_VALID_UUID}"/>'
         )
-        gmp_session_mock.start_task.return_value = ET.fromstring("<start_task_response/>")
+        gmp_session_mock.start_task.return_value = _start_task_xml()
         result = await start_scan(name="scan", target_id=_VALID_UUID)
         assert result["task_id"] == _VALID_UUID
+        assert result["report_id"] == _VALID_UUID2
+        assert result["status"] == "started"
+
+    async def test_missing_report_id_returns_empty_string(self, gmp_session_mock):
+        gmp_session_mock.create_task.return_value = ET.fromstring(
+            f'<create_task_response id="{_VALID_UUID}"/>'
+        )
+        gmp_session_mock.start_task.return_value = ET.fromstring("<start_task_response/>")
+        result = await start_scan(name="scan", target_id=_VALID_UUID)
+        assert result["report_id"] == ""
         assert result["status"] == "started"
 
     async def test_empty_name_validation_error(self, gmp_session_mock):
@@ -800,11 +810,59 @@ class TestStartTaskConcurrentLimit:
                 </task>
             </get_tasks_response>
             """)
-            result = await start_task(task_id=_VALID_UUID)
+            gmp_session_mock.get_task.return_value = _task_xml(status="Done")
+            result = await start_task(task_id=_VALID_UUID2)
             assert result["error"] is True
             assert result["code"] == "rate_limited"
-            gmp_session_mock.get_task.assert_not_called()
             gmp_session_mock.start_task.assert_not_called()
+        finally:
+            set_policy(original)
+
+    async def test_conflict_not_rate_limited_when_task_itself_is_running(self, gmp_session_mock):
+        """With the limit filled by this very task, the caller needs conflict, not a retry."""
+        original = get_policy()
+        set_policy(
+            Policy(
+                default_policy=ClientPolicy(
+                    allowed_tools=["*"],
+                    allowed_cidrs=["*"],
+                    max_concurrent_scans=1,
+                )
+            )
+        )
+        try:
+            gmp_session_mock.get_tasks.return_value = ET.fromstring(f"""
+            <get_tasks_response>
+                <task id="{_VALID_UUID}">
+                    <name>running</name><status>Running</status><progress>50</progress>
+                </task>
+            </get_tasks_response>
+            """)
+            gmp_session_mock.get_task.return_value = _task_xml(status="Running")
+            result = await start_task(task_id=_VALID_UUID)
+            assert result["error"] is True
+            assert result["code"] == "conflict"
+            gmp_session_mock.get_tasks.assert_not_called()
+            gmp_session_mock.start_task.assert_not_called()
+        finally:
+            set_policy(original)
+
+    async def test_not_found_not_rate_limited(self, gmp_session_mock):
+        original = get_policy()
+        set_policy(
+            Policy(
+                default_policy=ClientPolicy(
+                    allowed_tools=["*"],
+                    allowed_cidrs=["*"],
+                    max_concurrent_scans=1,
+                )
+            )
+        )
+        try:
+            gmp_session_mock.get_task.return_value = ET.fromstring("<get_tasks_response/>")
+            result = await start_task(task_id=_VALID_UUID)
+            assert result["code"] == "not_found"
+            gmp_session_mock.get_tasks.assert_not_called()
         finally:
             set_policy(original)
 

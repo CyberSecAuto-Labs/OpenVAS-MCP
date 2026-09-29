@@ -400,10 +400,10 @@ async def start_scan(
     FULL_AND_FAST = "daba56c8-73ec-11df-a475-002264764cea"
     DEFAULT_SCANNER = "08b69003-5fc2-4037-a479-93b440211c73"
 
-    def _check_and_start() -> tuple[str | None, dict[str, Any] | None]:
+    def _check_and_start() -> tuple[str | None, str, dict[str, Any] | None]:
         with gmp_session() as gmp:
             if limit_err := _concurrency_error(gmp, identity, "start_scan"):
-                return None, limit_err
+                return None, "", limit_err
             task = gmp.create_task(
                 name=name,
                 config_id=scan_config_id or FULL_AND_FAST,
@@ -412,13 +412,12 @@ async def start_scan(
             )
             tid = task.get("id", "")
             if not tid:
-                return None, _err("gvm_error", "GVM returned no task ID after create_task")
-            gmp.start_task(tid)
-            return tid, None
+                return None, "", _err("gvm_error", "GVM returned no task ID after create_task")
+            return tid, gmp.start_task(tid).findtext("report_id", ""), None
 
     try:
         async with _scan_start_lock:
-            task_id, err = await asyncio.to_thread(_check_and_start)
+            task_id, report_id, err = await asyncio.to_thread(_check_and_start)
     except GvmResponseError as e:
         logger.error("GMP response error", extra={"tool": "start_scan", "error": str(e)})
         return _err("gvm_response_error", str(e))
@@ -435,7 +434,7 @@ async def start_scan(
     if err:
         return err
 
-    result = {"task_id": task_id, "status": "started"}
+    result = {"task_id": task_id, "report_id": report_id, "status": "started"}
     logger.info(
         "tool completed",
         extra={
@@ -477,8 +476,9 @@ async def start_task(task_id: str) -> dict[str, Any]:
 
     def _check_and_start() -> tuple[str | None, dict[str, Any] | None]:
         with gmp_session() as gmp:
-            if limit_err := _concurrency_error(gmp, identity, "start_task"):
-                return None, limit_err
+            # Existence and status are checked before the concurrency limit, so that
+            # re-running the task that is itself running reports conflict (not
+            # retriable) rather than rate_limited (retriable).
             task = gmp.get_task(task_id).find("task")
             if task is None:
                 return None, _err("not_found", f"Task {task_id} not found")
@@ -489,6 +489,8 @@ async def start_task(task_id: str) -> dict[str, Any]:
                 return None, _err(
                     "conflict", f"Task {task_id} is already active (status: {status})"
                 )
+            if limit_err := _concurrency_error(gmp, identity, "start_task"):
+                return None, limit_err
             return gmp.start_task(task_id).findtext("report_id", ""), None
 
     try:
