@@ -64,8 +64,10 @@ Builds the `openvas-mcp` Docker image on every push and PR. Pushes to `ghcr.io/c
 
 Network egress is audited at two levels using [netaudit](https://pypi.org/project/netaudit/), which traces `connect()` syscalls via `strace` and fails on any connection to a non-loopback, non-Unix address:
 
-- **Startup path** (`startup-egress.yml`) — runs `python -m openvas_mcp` directly under `netaudit run`. Catches any phone-home behaviour introduced by the server or its dependencies at import/startup time. Runs on every push to `develop` or `main` for fast feedback.
+- **Startup path** (`startup-egress.yml`) — runs the server process itself under `netaudit run`. Catches any phone-home behaviour introduced by the server or its dependencies at import/startup time. Runs on every push to `develop` or `main` for fast feedback.
 - **Live code paths** (`integration.yml`) — passes `--netaudit` to pytest, which re-execs the test process under strace and attributes any violation to the specific test that triggered it. Covers GMP calls, session management, and all tool handlers against a real `gvmd` instance.
+
+**Exit-code contract:** since netaudit 0.6, `run` passes the traced command's exit status through, and that status takes precedence over netaudit's own verdict (`0` clean, `83` violations, `84`/`85` for a missing strace or a bad allowlist). The startup audit runs the server under `timeout 20`, which exits `124` by design, so the traced command is wrapped to end cleanly. Otherwise a healthy run fails, and a violation would be hidden behind the same `124`. The server's liveness is asserted separately from a status file, because netaudit captures the traced command's output and never replays it; a server that exits before the timeout fails the step instead of passing on a near-empty trace. The wrapper works under both the old and the new contract, so netaudit is not pinned. An inline pin in workflow YAML would also be invisible to Dependabot.
 
 **Guarantees:** the "local-first, no telemetry" claim is verified at the socket level on every push — both at startup and across the full tool call surface exercised by the integration tests.
 
