@@ -30,7 +30,7 @@ Authorization policy lives in a YAML file (`MCP_POLICY_FILE`) rather than code o
 
 The policy engine is deny-by-default at the per-client level: if a `clients` block exists and a client is not listed, they fall back to the `default` block. If no `default` block is defined, the built-in default permits everything — this keeps the server usable without a policy file for trusted deployments.
 
-CIDR enforcement happens at `create_target` time, where hosts are explicitly defined. It does not re-check hosts at `start_scan` time (which only receives a target UUID) — this is a known limitation documented below.
+CIDR enforcement happens at `create_target` time, where hosts are explicitly defined. It does not re-check hosts at `start_scan` or `start_task` time (which receive only a target or task UUID) — this is a known limitation documented below.
 
 ## Minimal runtime dependencies
 
@@ -42,7 +42,7 @@ CIDR enforcement happens at `create_target` time, where hosts are explicitly def
 
 ## Policy & authorization
 
-- **CIDR policy enforced at target creation only.** The `start_scan` tool takes a `target_id`, not a host list. CIDR policy is not re-validated at scan time — a target created before a more restrictive policy was deployed can still be scanned. Enforce policy at `create_target` time and manage target lifecycle accordingly.
+- **CIDR policy enforced at target creation only.** The `start_scan` tool takes a `target_id`, not a host list, and `start_task` takes only a task UUID. CIDR policy is not re-validated at scan time — a target created before a more restrictive policy was deployed can still be scanned, and an existing task can still be re-run. Enforce policy at `create_target` time and manage target lifecycle accordingly.
 
 - **Hostnames not matched by CIDR rules.** When a client has explicit CIDR restrictions, hostname targets (e.g. `myhost.example.com`) are denied — they cannot be resolved to an IP at policy check time. Use IP addresses or CIDR ranges in targets when CIDR policy is active.
 
@@ -50,7 +50,13 @@ CIDR enforcement happens at `create_target` time, where hosts are explicitly def
 
 ## Scanning
 
-- **No scan scheduling.** Tasks must be triggered explicitly via `start_scan`. There is no recurring or time-based scheduling.
+- **No scan scheduling.** Tasks must be triggered explicitly via `start_scan` (new task) or `start_task` (re-run an existing one). There is no recurring or time-based scheduling; GVM's own schedules are untouched by either tool.
+
+- **`start_task`'s status check is advisory.** The tool reads a task's status and returns `conflict` if it is already active, but the status can change between that read and the start — a GVM schedule, the GSA web UI, another MCP replica or a second worker process can all start the same task. `_scan_start_lock` serialises starts within one process only. GVM remains authoritative and its rejection surfaces as `gvm_response_error`.
+
+- **The concurrency limit counts only `status=Running`.** Tasks in `Requested` or `Queued` are not counted, so a burst of starts can briefly overshoot `max_concurrent_scans`. `start_task` makes this cheaper to trigger than `start_scan` did.
+
+- **`list_tasks` is paged by GVM.** With no `filter_string`, GVM applies the service account's default rows-per-page (100 on a stock install), so large deployments see a truncated list. Pass `rows=-1` for every task, or `rows=N` to page. A supplied filter replaces GVM's default filter wholesale rather than merging with it.
 
 - **`get_scan_status` polls on a fixed interval.** The tool polls every 10 seconds with no push notification or webhook mechanism from GVM. It stops and returns a `"timeout"` error once the configurable deadline (`GVM_SCAN_POLL_TIMEOUT`, default 3600 s) is reached; call the tool again to resume monitoring.
 

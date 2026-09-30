@@ -1,11 +1,15 @@
 """Integration tests — exercise MCP tools against a live GVM instance.
 
-Run with:
+Run against the bundled Greenbone stack (docker/openvas/compose.yaml), which
+exposes gvmd via the gvmd-socket-proxy service on port 9393 — the CI default:
+
     GVM_INTEGRATION=1 GVM_HOST=127.0.0.1 GVM_PORT=9393 GVM_PASSWORD=admin \
         pytest tests/integration/ -v
 
-The Greenbone stack (docker/openvas/compose.yaml) exposes gvmd via the
-gvmd-socket-proxy service on port 9393. That's the default for CI.
+Or against a gvmd running on the same host, over its Unix socket:
+
+    GVM_INTEGRATION=1 GVM_SOCKET_PATH=/run/gvmd/gvmd.sock \
+        GVM_USERNAME=... GVM_PASSWORD=... pytest tests/integration/ -v
 """
 
 from __future__ import annotations
@@ -18,6 +22,7 @@ from openvas_mcp.server import (
     fetch_scan_results,
     list_targets,
     list_tasks,
+    start_task,
 )
 
 _PREFIX = "mcp-integration-"
@@ -97,6 +102,35 @@ class TestListTasks:
             assert "id" in task
             assert "name" in task
             assert "status" in task
+
+    async def test_rows_filter_limits_page_size(self):
+        result = await list_tasks(filter_string="rows=1")
+        assert isinstance(result, list)
+        assert len(result) <= 1
+
+    async def test_invalid_filter_returns_validation_error(self):
+        result = await list_tasks(filter_string="a" * 1001)
+        assert result.get("error") is True
+        assert result["code"] == "validation_error"
+
+
+# ---------------------------------------------------------------------------
+# start_task
+# ---------------------------------------------------------------------------
+
+
+class TestStartTask:
+    """No test here starts a real scan — only the rejection paths are exercised."""
+
+    async def test_invalid_uuid_returns_validation_error(self):
+        result = await start_task(task_id="not-a-uuid")
+        assert result.get("error") is True
+        assert result["code"] == "validation_error"
+
+    async def test_nonexistent_task_returns_not_found(self):
+        result = await start_task(task_id="00000000-0000-0000-0000-000000000000")
+        assert result.get("error") is True
+        assert result["code"] in ("not_found", "gvm_response_error", "gvm_error")
 
 
 # ---------------------------------------------------------------------------

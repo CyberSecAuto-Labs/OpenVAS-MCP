@@ -15,6 +15,7 @@ from openvas_mcp.server import (
     list_targets,
     list_tasks,
     start_scan,
+    start_task,
 )
 
 # ---------------------------------------------------------------------------
@@ -64,6 +65,12 @@ def _task_xml(tid: str = _VALID_UUID, name: str = "test-task", status: str = "Do
         </task>
     </get_tasks_response>
     """)
+
+
+def _start_task_xml(report_id: str = _VALID_UUID2) -> ET.Element:
+    return ET.fromstring(
+        f'<start_task_response status="202"><report_id>{report_id}</report_id></start_task_response>'
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -232,6 +239,33 @@ class TestListTasks:
         assert result["error"] is True
         assert result["code"] == "connection_error"
 
+    async def test_filter_string_passed_through(self, gmp_session_mock):
+        gmp_session_mock.get_tasks.return_value = _task_xml()
+        await list_tasks(filter_string="name~weekly")
+        gmp_session_mock.get_tasks.assert_called_once_with(filter_string="name~weekly")
+
+    async def test_no_filter_passes_empty_string(self, gmp_session_mock):
+        gmp_session_mock.get_tasks.return_value = _task_xml()
+        await list_tasks()
+        gmp_session_mock.get_tasks.assert_called_once_with(filter_string="")
+
+    async def test_whitespace_only_filter_treated_as_empty(self, gmp_session_mock):
+        gmp_session_mock.get_tasks.return_value = _task_xml()
+        await list_tasks(filter_string="   ")
+        gmp_session_mock.get_tasks.assert_called_once_with(filter_string="")
+
+    async def test_filter_too_long_validation_error(self, gmp_session_mock):
+        result = await list_tasks(filter_string="a" * 1001)
+        assert result["error"] is True
+        assert result["code"] == "validation_error"
+        gmp_session_mock.get_tasks.assert_not_called()
+
+    async def test_filter_control_char_validation_error(self, gmp_session_mock):
+        result = await list_tasks(filter_string="name~x\x00")
+        assert result["error"] is True
+        assert result["code"] == "validation_error"
+        gmp_session_mock.get_tasks.assert_not_called()
+
 
 # ---------------------------------------------------------------------------
 # start_scan
@@ -243,9 +277,19 @@ class TestStartScan:
         gmp_session_mock.create_task.return_value = ET.fromstring(
             f'<create_task_response id="{_VALID_UUID}"/>'
         )
-        gmp_session_mock.start_task.return_value = ET.fromstring("<start_task_response/>")
+        gmp_session_mock.start_task.return_value = _start_task_xml()
         result = await start_scan(name="scan", target_id=_VALID_UUID)
         assert result["task_id"] == _VALID_UUID
+        assert result["report_id"] == _VALID_UUID2
+        assert result["status"] == "started"
+
+    async def test_missing_report_id_returns_empty_string(self, gmp_session_mock):
+        gmp_session_mock.create_task.return_value = ET.fromstring(
+            f'<create_task_response id="{_VALID_UUID}"/>'
+        )
+        gmp_session_mock.start_task.return_value = ET.fromstring("<start_task_response/>")
+        result = await start_scan(name="scan", target_id=_VALID_UUID)
+        assert result["report_id"] == ""
         assert result["status"] == "started"
 
     async def test_empty_name_validation_error(self, gmp_session_mock):
@@ -299,6 +343,102 @@ class TestStartScan:
         result = await start_scan(name="scan", target_id=_VALID_UUID)
         assert result["error"] is True
         assert result["code"] == "connection_error"
+
+
+# ---------------------------------------------------------------------------
+# start_task
+# ---------------------------------------------------------------------------
+
+
+class TestStartTask:
+    async def test_success(self, gmp_session_mock):
+        gmp_session_mock.get_task.return_value = _task_xml(status="Done")
+        gmp_session_mock.start_task.return_value = _start_task_xml()
+        result = await start_task(task_id=_VALID_UUID)
+        assert result["task_id"] == _VALID_UUID
+        assert result["report_id"] == _VALID_UUID2
+        assert result["status"] == "started"
+        gmp_session_mock.start_task.assert_called_once_with(_VALID_UUID)
+
+    async def test_startable_from_stopped(self, gmp_session_mock):
+        gmp_session_mock.get_task.return_value = _task_xml(status="Stopped")
+        gmp_session_mock.start_task.return_value = _start_task_xml()
+        result = await start_task(task_id=_VALID_UUID)
+        assert result["status"] == "started"
+
+    async def test_invalid_uuid_validation_error(self, gmp_session_mock):
+        result = await start_task(task_id="not-a-uuid")
+        assert result["error"] is True
+        assert result["code"] == "validation_error"
+        gmp_session_mock.get_task.assert_not_called()
+        gmp_session_mock.start_task.assert_not_called()
+
+    async def test_task_not_found(self, gmp_session_mock):
+        gmp_session_mock.get_task.return_value = ET.fromstring("<get_tasks_response/>")
+        result = await start_task(task_id=_VALID_UUID)
+        assert result["error"] is True
+        assert result["code"] == "not_found"
+        gmp_session_mock.start_task.assert_not_called()
+
+    @pytest.mark.parametrize(
+        "status", ["Requested", "Queued", "Running", "Stop Requested", "Processing"]
+    )
+    async def test_conflict_when_active(self, gmp_session_mock, status):
+        gmp_session_mock.get_task.return_value = _task_xml(status=status)
+        result = await start_task(task_id=_VALID_UUID)
+        assert result["error"] is True
+        assert result["code"] == "conflict"
+        assert status in result["message"]
+        gmp_session_mock.start_task.assert_not_called()
+
+    async def test_missing_report_id_returns_empty_string(self, gmp_session_mock):
+        gmp_session_mock.get_task.return_value = _task_xml(status="Done")
+        gmp_session_mock.start_task.return_value = ET.fromstring(
+            '<start_task_response status="202"/>'
+        )
+        result = await start_task(task_id=_VALID_UUID)
+        assert result["report_id"] == ""
+        assert result["status"] == "started"
+
+    async def test_gmp_response_error(self, gmp_session_mock):
+        from gvm.errors import GvmResponseError
+
+        gmp_session_mock.get_task.side_effect = GvmResponseError("400", "bad request")
+        result = await start_task(task_id=_VALID_UUID)
+        assert result["error"] is True
+        assert result["code"] == "gvm_response_error"
+
+    async def test_gmp_server_error(self, gmp_session_mock):
+        from gvm.errors import GvmServerError
+
+        gmp_session_mock.get_task.side_effect = GvmServerError("500", "internal error")
+        result = await start_task(task_id=_VALID_UUID)
+        assert result["error"] is True
+        assert result["code"] == "gvm_server_error"
+
+    async def test_gmp_error(self, gmp_session_mock):
+        from gvm.errors import GvmError
+
+        gmp_session_mock.get_task.side_effect = GvmError("fail")
+        result = await start_task(task_id=_VALID_UUID)
+        assert result["error"] is True
+        assert result["code"] == "gvm_error"
+
+    async def test_connection_error(self, gmp_session_mock):
+        gmp_session_mock.get_task.side_effect = OSError("refused")
+        result = await start_task(task_id=_VALID_UUID)
+        assert result["error"] is True
+        assert result["code"] == "connection_error"
+
+    async def test_start_rejected_after_status_read(self, gmp_session_mock):
+        """GVM stays authoritative: the status pre-check is advisory (TOCTOU)."""
+        from gvm.errors import GvmResponseError
+
+        gmp_session_mock.get_task.return_value = _task_xml(status="Done")
+        gmp_session_mock.start_task.side_effect = GvmResponseError("400", "Task is active already")
+        result = await start_task(task_id=_VALID_UUID)
+        assert result["error"] is True
+        assert result["code"] == "gvm_response_error"
 
 
 # ---------------------------------------------------------------------------
@@ -553,6 +693,13 @@ class TestToolAuthzEnforcement:
         assert result["code"] == "forbidden"
         gmp_session_mock.create_task.assert_not_called()
 
+    async def test_start_task_denied(self, gmp_session_mock, deny_all_policy):
+        result = await start_task(task_id=_VALID_UUID)
+        assert result["error"] is True
+        assert result["code"] == "forbidden"
+        gmp_session_mock.get_task.assert_not_called()
+        gmp_session_mock.start_task.assert_not_called()
+
     async def test_fetch_scan_results_denied(self, gmp_session_mock, deny_all_policy):
         result = await fetch_scan_results(task_id=_VALID_UUID)
         assert result["error"] is True
@@ -637,6 +784,110 @@ class TestStartScanConcurrentLimit:
             )
             gmp_session_mock.start_task.return_value = ET.fromstring("<start_task_response/>")
             result = await start_scan(name="scan", target_id=_VALID_UUID)
+            assert result["task_id"] == _VALID_UUID
+            assert result["status"] == "started"
+        finally:
+            set_policy(original)
+
+
+class TestStartTaskConcurrentLimit:
+    async def test_rate_limited_when_limit_reached(self, gmp_session_mock):
+        original = get_policy()
+        set_policy(
+            Policy(
+                default_policy=ClientPolicy(
+                    allowed_tools=["*"],
+                    allowed_cidrs=["*"],
+                    max_concurrent_scans=1,
+                )
+            )
+        )
+        try:
+            gmp_session_mock.get_tasks.return_value = ET.fromstring(f"""
+            <get_tasks_response>
+                <task id="{_VALID_UUID}">
+                    <name>running</name><status>Running</status><progress>50</progress>
+                </task>
+            </get_tasks_response>
+            """)
+            gmp_session_mock.get_task.return_value = _task_xml(status="Done")
+            result = await start_task(task_id=_VALID_UUID2)
+            assert result["error"] is True
+            assert result["code"] == "rate_limited"
+            gmp_session_mock.start_task.assert_not_called()
+        finally:
+            set_policy(original)
+
+    async def test_conflict_not_rate_limited_when_task_itself_is_running(self, gmp_session_mock):
+        """With the limit filled by this very task, the caller needs conflict, not a retry."""
+        original = get_policy()
+        set_policy(
+            Policy(
+                default_policy=ClientPolicy(
+                    allowed_tools=["*"],
+                    allowed_cidrs=["*"],
+                    max_concurrent_scans=1,
+                )
+            )
+        )
+        try:
+            gmp_session_mock.get_tasks.return_value = ET.fromstring(f"""
+            <get_tasks_response>
+                <task id="{_VALID_UUID}">
+                    <name>running</name><status>Running</status><progress>50</progress>
+                </task>
+            </get_tasks_response>
+            """)
+            gmp_session_mock.get_task.return_value = _task_xml(status="Running")
+            result = await start_task(task_id=_VALID_UUID)
+            assert result["error"] is True
+            assert result["code"] == "conflict"
+            gmp_session_mock.get_tasks.assert_not_called()
+            gmp_session_mock.start_task.assert_not_called()
+        finally:
+            set_policy(original)
+
+    async def test_not_found_not_rate_limited(self, gmp_session_mock):
+        original = get_policy()
+        set_policy(
+            Policy(
+                default_policy=ClientPolicy(
+                    allowed_tools=["*"],
+                    allowed_cidrs=["*"],
+                    max_concurrent_scans=1,
+                )
+            )
+        )
+        try:
+            gmp_session_mock.get_task.return_value = ET.fromstring("<get_tasks_response/>")
+            result = await start_task(task_id=_VALID_UUID)
+            assert result["code"] == "not_found"
+            gmp_session_mock.get_tasks.assert_not_called()
+        finally:
+            set_policy(original)
+
+    async def test_allowed_when_below_limit(self, gmp_session_mock):
+        original = get_policy()
+        set_policy(
+            Policy(
+                default_policy=ClientPolicy(
+                    allowed_tools=["*"],
+                    allowed_cidrs=["*"],
+                    max_concurrent_scans=2,
+                )
+            )
+        )
+        try:
+            gmp_session_mock.get_tasks.return_value = ET.fromstring(f"""
+            <get_tasks_response>
+                <task id="{_VALID_UUID}">
+                    <name>running</name><status>Running</status><progress>50</progress>
+                </task>
+            </get_tasks_response>
+            """)
+            gmp_session_mock.get_task.return_value = _task_xml(status="Done")
+            gmp_session_mock.start_task.return_value = _start_task_xml()
+            result = await start_task(task_id=_VALID_UUID)
             assert result["task_id"] == _VALID_UUID
             assert result["status"] == "started"
         finally:

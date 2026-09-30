@@ -14,7 +14,9 @@ default:
 # Per-client overrides — client name matches the label assigned in MCP_API_KEYS.
 # Example: MCP_API_KEYS="tok1:readonly,tok2:scanner,tok3:internal-scanner,tok4:admin"
 clients:
-  # Read-only agent: can query results but cannot launch scans
+  # Read-only agent: can query results but cannot launch scans.
+  # start_scan and start_task are the two scan-launching tools; both are
+  # governed by max_concurrent_scans.
   readonly:
     allowed_tools: [list_targets, list_tasks, get_scan_status, fetch_scan_results]
     allowed_cidrs: ["*"]
