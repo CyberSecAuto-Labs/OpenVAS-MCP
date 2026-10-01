@@ -8,6 +8,14 @@ RUN pip install --no-cache-dir -U pip setuptools wheel && \
 
 FROM python:3.11-slim
 
+# python:3.11-slim is a floating tag, but upstream rebuilds on its own cadence, so
+# its Debian packages can sit on a superseded patch level while a security fix is
+# already published. Upgrading here closes those fixable CVEs instead of waiting
+# on an upstream rebuild.
+RUN apt-get update && \
+    apt-get upgrade -y && \
+    rm -rf /var/lib/apt/lists/*
+
 RUN pip install --no-cache-dir -U pip setuptools wheel && \
     useradd --create-home --shell /bin/sh --uid 1000 mcp
 
