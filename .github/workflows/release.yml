@@ -19,7 +19,7 @@ jobs:
       id-token: write   # cosign keyless OIDC signing
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0  # full history for changelog
 
