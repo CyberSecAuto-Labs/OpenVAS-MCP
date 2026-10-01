@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 
 _VALID_LOG_LEVELS = {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}
 _VALID_TRANSPORTS = {"stdio", "sse", "streamable-http"}
+_VALID_FILTER_VALIDATION = {"strict", "warn"}
 
 
 @dataclass
@@ -26,6 +27,8 @@ class Config:
     mcp_api_keys: str = field(repr=False)
     mcp_policy_file: str
     mcp_allow_unauthenticated: bool
+    # strict: reject a filter term gvmd would silently drop; warn: log it and pass it through
+    mcp_filter_validation: str
     scan_poll_timeout: int  # max seconds get_scan_status will poll before returning timeout error
     report_max_results: int  # max results returned by fetch_scan_results; 0 = unlimited
 
@@ -54,6 +57,13 @@ class Config:
             mcp_port = int(raw_mcp_port)
         except ValueError:
             raise ValueError(f"MCP_PORT must be an integer, got: {raw_mcp_port!r}") from None
+
+        filter_validation = os.environ.get("MCP_FILTER_VALIDATION", "strict").lower()
+        if filter_validation not in _VALID_FILTER_VALIDATION:
+            raise ValueError(
+                f"MCP_FILTER_VALIDATION must be one of {sorted(_VALID_FILTER_VALIDATION)}, "
+                f"got: {filter_validation!r}"
+            )
 
         raw_poll_timeout = os.environ.get("GVM_SCAN_POLL_TIMEOUT", "3600")
         try:
@@ -92,6 +102,7 @@ class Config:
             mcp_policy_file=os.environ.get("MCP_POLICY_FILE", ""),
             mcp_allow_unauthenticated=os.environ.get("MCP_ALLOW_UNAUTHENTICATED", "").lower()
             in ("1", "true", "yes"),
+            mcp_filter_validation=filter_validation,
             scan_poll_timeout=scan_poll_timeout,
             report_max_results=report_max_results,
         )
