@@ -27,9 +27,34 @@ jobs:
         # netaudit traces connect() syscalls via strace — any connection attempt
         # to a non-loopback, non-Unix address fails the job. No Docker or network
         # isolation needed; violations are caught at the syscall level.
+        #
+        # The server is still running when `timeout` stops it, which is exit 124.
+        # Since netaudit 0.6 the traced command's exit code is passed through and
+        # takes precedence over netaudit's own verdict, so a raw 124 would both
+        # fail a healthy run and hide a violation behind the same 124. The trace
+        # therefore always ends cleanly and netaudit owns the exit status: 0
+        # clean, 83 violations (set -e fails the step on the latter). This holds
+        # under the pre-0.6 contract too, so netaudit is deliberately not pinned.
+        #
+        # The server's own liveness is asserted separately, out of band: netaudit
+        # captures the traced command's stdout/stderr and never replays them, so
+        # the status and the server log are written to files and read back here.
+        # Anything other than 124 means the server exited early, which leaves a
+        # near-empty trace and must not pass for want of anything to observe.
         env:
           GVM_PASSWORD: audit-test
           GVM_HOST: localhost
           MCP_TRANSPORT: sse
           MCP_ALLOW_UNAUTHENTICATED: "1"
-        run: netaudit run -- timeout 20 python -m openvas_mcp
+        run: |
+          netaudit run -- bash -c '
+            timeout 20 python -m openvas_mcp 2> "$RUNNER_TEMP/server.log"
+            echo $? > "$RUNNER_TEMP/server.status"
+          '
+          status=$(cat "$RUNNER_TEMP/server.status")
+          if [ "$status" -ne 124 ]; then
+            echo "audit: server exited early with status $status; its stderr follows" >&2
+            cat "$RUNNER_TEMP/server.log" >&2
+            exit 1
+          fi
+          echo "audit: server ran for the full 20s under strace, no egress violations"

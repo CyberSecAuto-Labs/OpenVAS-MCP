@@ -1,11 +1,15 @@
 """Integration tests — exercise MCP tools against a live GVM instance.
 
-Run with:
+Run against the bundled Greenbone stack (docker/openvas/compose.yaml), which
+exposes gvmd via the gvmd-socket-proxy service on port 9393 — the CI default:
+
     GVM_INTEGRATION=1 GVM_HOST=127.0.0.1 GVM_PORT=9393 GVM_PASSWORD=admin \
         pytest tests/integration/ -v
 
-The Greenbone stack (docker/openvas/compose.yaml) exposes gvmd via the
-gvmd-socket-proxy service on port 9393. That's the default for CI.
+Or against a gvmd running on the same host, over its Unix socket:
+
+    GVM_INTEGRATION=1 GVM_SOCKET_PATH=/run/gvmd/gvmd.sock \
+        GVM_USERNAME=... GVM_PASSWORD=... pytest tests/integration/ -v
 """
 
 from __future__ import annotations
@@ -13,11 +17,14 @@ from __future__ import annotations
 import logging
 import uuid
 
+import pytest
+
 from openvas_mcp.server import (
     create_target,
     fetch_scan_results,
     list_targets,
     list_tasks,
+    start_task,
 )
 
 _PREFIX = "mcp-integration-"
@@ -44,6 +51,9 @@ class TestListTargets:
             assert "id" in target
             assert "name" in target
             assert "hosts" in target
+            assert "exclude_hosts" in target
+            assert "host_count" in target
+            assert target["host_count"] is None or isinstance(target["host_count"], int)
 
 
 # ---------------------------------------------------------------------------
@@ -97,6 +107,112 @@ class TestListTasks:
             assert "id" in task
             assert "name" in task
             assert "status" in task
+            for key in (
+                "last_report_date",
+                "severity",
+                "report_count",
+                "finished_report_count",
+                "trend",
+                "target_id",
+                "target_name",
+                "host_count",
+            ):
+                assert key in task
+            assert task["severity"] is None or isinstance(task["severity"], float)
+            assert task["host_count"] is None or isinstance(task["host_count"], int)
+
+    async def test_last_report_date_is_populated_for_completed_tasks(self):
+        """A task that has a last report must expose when that report was made."""
+        result = await list_tasks(filter_string="status=Done rows=20")
+        with_reports = [t for t in result if t["last_report"]]
+        if not with_reports:
+            pytest.skip("no completed tasks with a report on this GVM")
+        for task in with_reports:
+            assert task["last_report_date"]
+
+    async def test_host_count_resolves_for_tasks_with_a_target(self):
+        result = await list_tasks(filter_string="rows=20")
+        with_targets = [t for t in result if t["target_id"]]
+        if not with_targets:
+            pytest.skip("no tasks with a target on this GVM")
+        assert any(t["host_count"] is not None for t in with_targets)
+
+    async def test_rows_filter_limits_page_size(self):
+        result = await list_tasks(filter_string="rows=1")
+        assert isinstance(result, list)
+        assert len(result) <= 1
+
+    async def test_invalid_filter_returns_validation_error(self):
+        result = await list_tasks(filter_string="a" * 1001)
+        assert result.get("error") is True
+        assert result["code"] == "validation_error"
+
+    async def test_unsupported_filter_keyword_returns_validation_error(self):
+        """GVM would drop this term silently and return every task."""
+        result = await list_tasks(filter_string="zzzbogus<4")
+        assert result.get("error") is True
+        assert result["code"] == "validation_error"
+
+    async def test_unparseable_date_value_returns_validation_error(self):
+        result = await list_tasks(filter_string="last<yesterday")
+        assert result.get("error") is True
+        assert result["code"] == "validation_error"
+
+    async def test_invalid_calendar_date_returns_validation_error(self):
+        """gvmd evaluates last<2026-13-01 as true for every task instead of rejecting it."""
+        result = await list_tasks(filter_string="last<2026-13-01")
+        assert result.get("error") is True
+        assert result["code"] == "validation_error"
+
+    async def test_emitted_last_report_date_needs_its_offset_dropped(self):
+        """gvmd discards a UTC offset in a filter value, so the bridge rejects one; the
+        wall-clock part the error suggests must then be accepted."""
+        result = await list_tasks(filter_string="status=Done rows=20")
+        dated = [t for t in result if t["last_report_date"]]
+        if not dated:
+            pytest.skip("no completed tasks with a report on this GVM")
+        emitted = dated[0]["last_report_date"]
+        rejected = await list_tasks(filter_string=f"last<{emitted}")
+        assert rejected.get("error") is True
+        assert "UTC offset" in rejected["message"]
+        wall_clock = emitted[:19]
+        assert isinstance(await list_tasks(filter_string=f"last<{wall_clock} rows=1"), list)
+
+    async def test_every_target_resolved_for_the_host_count_join(self, gvm):
+        """The join pages past gvmd's row cap, so it sees every target gvmd counts."""
+        from openvas_mcp.server import _fetch_target_host_counts
+
+        filtered = int(gvm.get_targets(filter_string="rows=1").findtext("target_count/filtered"))
+        assert len(_fetch_target_host_counts(gvm)) == filtered
+
+    async def test_compound_filter_narrows_the_result_set(self):
+        """The acceptance query: an explicit `and` must intersect, not widen."""
+        by_severity = await list_tasks(filter_string="severity>5 rows=-1")
+        compound = await list_tasks(filter_string="severity>5 and last<-1M rows=-1")
+        assert isinstance(by_severity, list)
+        assert isinstance(compound, list)
+        assert len(compound) <= len(by_severity)
+        for task in compound:
+            assert task["severity"] is None or task["severity"] > 5
+
+
+# ---------------------------------------------------------------------------
+# start_task
+# ---------------------------------------------------------------------------
+
+
+class TestStartTask:
+    """No test here starts a real scan — only the rejection paths are exercised."""
+
+    async def test_invalid_uuid_returns_validation_error(self):
+        result = await start_task(task_id="not-a-uuid")
+        assert result.get("error") is True
+        assert result["code"] == "validation_error"
+
+    async def test_nonexistent_task_returns_not_found(self):
+        result = await start_task(task_id="00000000-0000-0000-0000-000000000000")
+        assert result.get("error") is True
+        assert result["code"] in ("not_found", "gvm_response_error", "gvm_error")
 
 
 # ---------------------------------------------------------------------------

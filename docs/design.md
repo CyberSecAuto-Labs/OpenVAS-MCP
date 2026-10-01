@@ -8,6 +8,16 @@ The MCP server authenticates to GVM using one dedicated service account. AI agen
 
 The server translates MCP tool calls into GMP operations and returns structured results. It implements no vulnerability analysis, prioritization, or remediation logic. That belongs in the agent or a platform built on top.
 
+## No model of GVM's internals
+
+The bridge validates the shape of its own inputs — UUID format, string length, value ranges — and stops there. It carries no copy of GVM's filter columns, object schema, or version-specific behaviour.
+
+Where GVM is lossy or ambiguous, report what GVM actually did rather than predicting what it will do. A check derived from GVM's own response stays correct as GVM changes; a check derived from a table of GVM's internals is correct only for the version it was written against, and goes wrong quietly.
+
+## Secondary data never fails the response
+
+A tool may make more than one GMP call — resolving a report ID before fetching the report, or reading a target to annotate a task. Where the second call only enriches the response, its failure resolves that field to `null` and the tool still returns. Only a call the response cannot be built without may surface as an error.
+
 ## stderr for all diagnostics
 
 The stdio transport uses stdout as the JSON-RPC channel. Any byte written to stdout outside of the MCP framing corrupts the stream. All logging goes to stderr via the structured JSON logger.
@@ -30,7 +40,7 @@ Authorization policy lives in a YAML file (`MCP_POLICY_FILE`) rather than code o
 
 The policy engine is deny-by-default at the per-client level: if a `clients` block exists and a client is not listed, they fall back to the `default` block. If no `default` block is defined, the built-in default permits everything — this keeps the server usable without a policy file for trusted deployments.
 
-CIDR enforcement happens at `create_target` time, where hosts are explicitly defined. It does not re-check hosts at `start_scan` time (which only receives a target UUID) — this is a known limitation documented below.
+CIDR enforcement happens at `create_target` time, where hosts are explicitly defined. It does not re-check hosts at `start_scan` or `start_task` time (which receive only a target or task UUID) — this is a known limitation documented below.
 
 ## Minimal runtime dependencies
 
@@ -42,7 +52,7 @@ CIDR enforcement happens at `create_target` time, where hosts are explicitly def
 
 ## Policy & authorization
 
-- **CIDR policy enforced at target creation only.** The `start_scan` tool takes a `target_id`, not a host list. CIDR policy is not re-validated at scan time — a target created before a more restrictive policy was deployed can still be scanned. Enforce policy at `create_target` time and manage target lifecycle accordingly.
+- **CIDR policy enforced at target creation only.** The `start_scan` tool takes a `target_id`, not a host list, and `start_task` takes only a task UUID. CIDR policy is not re-validated at scan time — a target created before a more restrictive policy was deployed can still be scanned, and an existing task can still be re-run. Enforce policy at `create_target` time and manage target lifecycle accordingly.
 
 - **Hostnames not matched by CIDR rules.** When a client has explicit CIDR restrictions, hostname targets (e.g. `myhost.example.com`) are denied — they cannot be resolved to an IP at policy check time. Use IP addresses or CIDR ranges in targets when CIDR policy is active.
 
@@ -50,7 +60,25 @@ CIDR enforcement happens at `create_target` time, where hosts are explicitly def
 
 ## Scanning
 
-- **No scan scheduling.** Tasks must be triggered explicitly via `start_scan`. There is no recurring or time-based scheduling.
+- **No scan scheduling.** Tasks must be triggered explicitly via `start_scan` (new task) or `start_task` (re-run an existing one). There is no recurring or time-based scheduling; GVM's own schedules are untouched by either tool.
+
+- **`start_task`'s status check is advisory.** The tool reads a task's status and returns `conflict` if it is already active, but the status can change between that read and the start — a GVM schedule, the GSA web UI, another MCP replica or a second worker process can all start the same task. `_scan_start_lock` serialises starts within one process only. GVM remains authoritative and its rejection surfaces as `gvm_response_error`.
+
+- **The concurrency limit counts only `status=Running`.** Tasks in `Requested` or `Queued` are not counted, so a burst of starts can briefly overshoot `max_concurrent_scans`. `start_task` makes this cheaper to trigger than `start_scan` did.
+
+- **`list_tasks` is paged by GVM.** GVM pages every task list by the service account's *Rows Per Page* setting (10 and 100 have both been observed, so do not assume a number), so large deployments see a truncated list. Pass `rows=-1` for every task, or `rows=N` to page. Note that `rows=-1` is not literally unlimited: gvmd rewrites it to the account's *Max Rows Per Page* (1000 by default). A supplied filter is merged with GVM's built-in defaults rather than replacing them — `name~x` is run as `apply_overrides=0 min_qod=70 name~x first=1 rows=100 sort=name` — so a filter without `rows=` still returns a single page. (The account's saved *Tasks Filter* is not merged in.)
+
+- **GMP filter terms are OR-ed unless joined with `and`.** `severity>5 total<4` returns the union of both terms — *more* rows than either alone — which reads as the filter having been ignored. This is GMP's own semantics; the server documents it in the `list_tasks` tool description but does not rewrite the caller's filter, since silently converting OR to AND would be exactly the kind of hidden behaviour the bridge avoids.
+
+- **Filter keywords are allowlisted because GVM drops unknown ones silently.** gvmd discards a filter term whose keyword it does not recognise (`zzzbogus<4`) or whose value it cannot parse (`last<yesterday`) without reporting an error and without any marker in the response — the caller gets a wider result set and no way to detect it. Acting on that (starting a batch of tasks, say) would hit the wrong set, so `_validate_filter` rejects those terms up front. The allowlist in `server.py` was verified term by term against a live gvmd; `progress`, `permission`, `alterable`, `in_use`, `observers`, `config`, `scanner`, `average_duration`, `overrides`, `notes`, `levels` and `timezone` are deliberately absent because gvmd ignores them for tasks. A gvmd whose columns differ can fall back to `MCP_FILTER_VALIDATION=warn`, which restores the silent behaviour.
+
+- **Relative filter dates use `m` for minutes and `M` for months.** `last<-1m` selects tasks whose last report is older than one *minute*, i.e. nearly all of them. The distinction is GMP's; the validator accepts both and the error message for an unparseable date spells the units out.
+
+- **Absolute filter dates are wall-clock, minute-resolution, and offset-free.** Probing a gvmd speaking GMP 22.7 showed three things. First, a Z or UTC offset is parsed and then discarded (`14:30Z`, `14:30+05:00` and `14:30` select the same rows), so the validator rejects offsets instead of letting them skew the result silently; the error names the offset-free value to send. That includes the `+02:00` in `last_report_date`, so a value read from a task has its offset dropped before being fed back. Second, seconds are truncated, so `last<2026-08-14T14:30:59` behaves as `14:30`. Third, the wall-clock is read in the gvmd timezone's *standard* time, ignoring DST: during summer time an offset-free timestamp copied from `last_report_date` selects rows one hour later than it reads. Prefer relative offsets (`-30d`) or date-only values when an hour matters. An out-of-range date such as `2026-13-01` is not dropped either: gvmd evaluates it against a nonsense value (`<` matches every task, `>` none), which is why the validator range-checks the calendar instead of only matching the shape.
+
+- **Task severity is the last report's severity.** GVM sends no task-level severity element, so `list_tasks` reports `last_report/report/severity`. A task that has never completed a report has `severity: null` — not `0.0`, which would be indistinguishable from a genuinely clean scan.
+
+- **`host_count` comes from the target, not the task.** Task XML names a task's target but not its hosts, so `list_tasks` issues a second `get_targets` call in the same session and joins on target UUID, using gvmd's own computed `max_hosts` rather than re-implementing CIDR expansion. gvmd caps each `get_targets` page at *Max Rows Per Page* (1000 by default) even for `rows=-1`, so the join pages with `first=` until it has read the `<target_count><filtered>` total. It never waits for an empty page, because gvmd answers a `first=` past the end by silently restarting at page one. A target that was deleted or moved to the trashcan yields `host_count: null`, and so does every task if the account cannot read targets at all: the task list is still returned, and the failure is logged. `get_scan_status` resolves its single target once and reuses the value for the rest of the poll. A failed resolution is retried on the next poll instead of pinning `null`.
 
 - **`get_scan_status` polls on a fixed interval.** The tool polls every 10 seconds with no push notification or webhook mechanism from GVM. It stops and returns a `"timeout"` error once the configurable deadline (`GVM_SCAN_POLL_TIMEOUT`, default 3600 s) is reached; call the tool again to resume monitoring.
 

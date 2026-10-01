@@ -30,7 +30,7 @@ openvas_mcp/
 
 1. AI agent calls an MCP tool (e.g. `start_scan`)
 2. `server.py` checks that the tool is allowed by the policy (always permitted for stdio — identity is `None`, default policy is permissive)
-3. Input is validated at the tool boundary (UUID format, string length, value ranges)
+3. Input is validated at the tool boundary (UUID format, string length, value ranges, and GMP filter keywords and value grammar — GVM drops filter terms it does not understand without reporting an error)
 4. `gmp_session()` opens a connection to GVM and authenticates with the service account
 5. The GMP method is called; the response is an XML `ElementTree`
 6. The tool parses the XML into a plain Python dict and returns it
@@ -84,7 +84,7 @@ A `Policy` object is loaded from `MCP_POLICY_FILE` at startup and installed as a
 
 - **Tool-level allow/deny** — each client has an `allowed_tools` list (`["*"]` for all)
 - **CIDR target restriction** — `create_target` validates every host/CIDR in the request against the client's `allowed_cidrs`; non-CIDR entries are treated as fnmatch hostname patterns (e.g. `*.internal`, `db.prod`)
-- **Concurrent scan limit** — `start_scan` counts active tasks before creating a new one when `max_concurrent_scans > 0`; this count is GVM-global, not per-client — scans started outside of MCP (e.g. via the GVM UI) consume the same capacity
+- **Concurrent scan limit** — `start_scan` and `start_task` count active tasks before starting one when `max_concurrent_scans > 0`; this count is GVM-global, not per-client — scans started outside of MCP (e.g. via the GVM UI) consume the same capacity
 
 Clients not listed in the policy fall back to the `default` block. If `MCP_POLICY_FILE` is unset, the default policy permits everything. If it is set but the file is missing, startup fails with an error.
 
