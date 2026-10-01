@@ -8,6 +8,16 @@ The MCP server authenticates to GVM using one dedicated service account. AI agen
 
 The server translates MCP tool calls into GMP operations and returns structured results. It implements no vulnerability analysis, prioritization, or remediation logic. That belongs in the agent or a platform built on top.
 
+## No model of GVM's internals
+
+The bridge validates the shape of its own inputs — UUID format, string length, value ranges — and stops there. It carries no copy of GVM's filter columns, object schema, or version-specific behaviour.
+
+Where GVM is lossy or ambiguous, report what GVM actually did rather than predicting what it will do. A check derived from GVM's own response stays correct as GVM changes; a check derived from a table of GVM's internals is correct only for the version it was written against, and goes wrong quietly.
+
+## Secondary data never fails the response
+
+A tool may make more than one GMP call — resolving a report ID before fetching the report, or reading a target to annotate a task. Where the second call only enriches the response, its failure resolves that field to `null` and the tool still returns. Only a call the response cannot be built without may surface as an error.
+
 ## stderr for all diagnostics
 
 The stdio transport uses stdout as the JSON-RPC channel. Any byte written to stdout outside of the MCP framing corrupts the stream. All logging goes to stderr via the structured JSON logger.
