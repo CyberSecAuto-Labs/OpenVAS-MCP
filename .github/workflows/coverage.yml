@@ -103,7 +103,7 @@ jobs:
           mv coverage-integration/.coverage .coverage.integration
           coverage combine .coverage.unit .coverage.integration
           coverage xml
-          genbadge coverage -i coverage.xml -o coverage-badge.svg
+          genbadge coverage -l -i coverage.xml -o coverage-badge.svg
 
       - name: Push badge to badges branch
         run: |
