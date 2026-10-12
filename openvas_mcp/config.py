@@ -31,6 +31,7 @@ class Config:
     mcp_filter_validation: str
     scan_poll_timeout: int  # max seconds get_scan_status will poll before returning timeout error
     report_max_results: int  # max results returned by fetch_scan_results; 0 = unlimited
+    target_max_pages: int  # max get_targets pages list_tasks reads for host_count; 0 = unlimited
 
     @classmethod
     def from_env(cls) -> Config:
@@ -85,6 +86,16 @@ class Config:
                 f"GVM_REPORT_MAX_RESULTS must be a non-negative integer, got: {raw_max_results!r}"
             ) from None
 
+        raw_max_pages = os.environ.get("GVM_TARGET_MAX_PAGES", "10")
+        try:
+            target_max_pages = int(raw_max_pages)
+            if target_max_pages < 0:
+                raise ValueError
+        except ValueError:
+            raise ValueError(
+                f"GVM_TARGET_MAX_PAGES must be a non-negative integer, got: {raw_max_pages!r}"
+            ) from None
+
         return cls(
             socket_path=os.environ.get("GVM_SOCKET_PATH", "/run/gvmd/gvmd.sock"),
             host=os.environ.get("GVM_HOST", ""),
@@ -105,6 +116,7 @@ class Config:
             mcp_filter_validation=filter_validation,
             scan_poll_timeout=scan_poll_timeout,
             report_max_results=report_max_results,
+            target_max_pages=target_max_pages,
         )
 
     def missing_required(self) -> list[str]:

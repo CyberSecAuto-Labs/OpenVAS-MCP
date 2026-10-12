@@ -42,6 +42,7 @@ All configuration is read from environment variables at startup. Invalid values 
 |---|---|---|
 | `GVM_SCAN_POLL_TIMEOUT` | `3600` | Maximum seconds `get_scan_status` will poll before returning a `timeout` error. Must be a positive integer. |
 | `GVM_REPORT_MAX_RESULTS` | `2000` | Maximum results returned by `fetch_scan_results`. `0` = unlimited. Truncated responses include `{"truncated": true, "cap": N}`. |
+| `GVM_TARGET_MAX_PAGES` | `10` | Maximum `get_targets` pages `list_tasks` reads to resolve `host_count` (one page is the account's *Max Rows Per Page*, 1000 by default). Tasks whose target lies past the cap get `host_count: null`, and a warning is logged. `0` = unlimited. |
 
 > [!NOTE]
 > `MCP_FILTER_VALIDATION=warn` exists for a gvmd whose filter columns differ from the ones the allowlist in `server.py` was verified against. It restores GVM's silent term-dropping, so a filter that looks narrow can return everything — prefer `strict` and extend the allowlist instead.

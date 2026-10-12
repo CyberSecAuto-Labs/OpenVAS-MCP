@@ -166,7 +166,7 @@ list_tasks(filter_string="severity>5 and last<-1M rows=-1")
 #   "target_name": "dmz-web-01", "host_count": 1}, …]
 ```
 
-The agent then keeps the rows with `host_count == 1` and calls `start_task` on each. A `null` `severity` or `host_count` means *unresolved* (no report yet, or the target is gone), never zero.
+The agent then keeps the rows with `host_count == 1` and calls `start_task` on each. A `null` `severity` or `host_count` means *unresolved* (no report yet, the target is gone, or it lies past `GVM_TARGET_MAX_PAGES`), never zero.
 
 ### GMP filter syntax
 

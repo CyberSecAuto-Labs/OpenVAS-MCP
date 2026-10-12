@@ -20,6 +20,8 @@ def test_defaults(monkeypatch):
     monkeypatch.delenv("MCP_POLICY_FILE", raising=False)
     monkeypatch.delenv("MCP_ALLOW_UNAUTHENTICATED", raising=False)
     monkeypatch.delenv("MCP_FILTER_VALIDATION", raising=False)
+    monkeypatch.delenv("GVM_REPORT_MAX_RESULTS", raising=False)
+    monkeypatch.delenv("GVM_TARGET_MAX_PAGES", raising=False)
 
     from openvas_mcp.config import Config
 
@@ -34,6 +36,8 @@ def test_defaults(monkeypatch):
     assert cfg.mcp_transport == "stdio"
     assert cfg.mcp_host == "127.0.0.1"
     assert cfg.mcp_port == 8000
+    assert cfg.report_max_results == 2000
+    assert cfg.target_max_pages == 10
 
 
 def test_gvm_port_invalid(monkeypatch):
@@ -219,3 +223,28 @@ def test_mcp_allow_unauthenticated_falsy(monkeypatch):
 
     cfg = Config.from_env()
     assert cfg.mcp_allow_unauthenticated is False
+
+
+@pytest.mark.parametrize(
+    ("var", "attr"),
+    [
+        ("GVM_REPORT_MAX_RESULTS", "report_max_results"),
+        ("GVM_TARGET_MAX_PAGES", "target_max_pages"),
+    ],
+)
+@pytest.mark.parametrize("value", ["0", "5"])
+def test_non_negative_caps_accepted(monkeypatch, var, attr, value):
+    monkeypatch.setenv(var, value)
+    from openvas_mcp.config import Config
+
+    assert getattr(Config.from_env(), attr) == int(value)
+
+
+@pytest.mark.parametrize("var", ["GVM_REPORT_MAX_RESULTS", "GVM_TARGET_MAX_PAGES"])
+@pytest.mark.parametrize("value", ["-1", "ten", ""])
+def test_invalid_caps_rejected(monkeypatch, var, value):
+    monkeypatch.setenv(var, value)
+    from openvas_mcp.config import Config
+
+    with pytest.raises(ValueError, match=var):
+        Config.from_env()

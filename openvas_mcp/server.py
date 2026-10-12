@@ -213,19 +213,29 @@ def _target_host_counts(response: ET.Element) -> dict[str, int | None]:
     return {t.get("id", ""): _elem_int(t, "max_hosts") for t in response.findall("target")}
 
 
-def _fetch_target_host_counts(gmp: Any) -> dict[str, int | None]:
-    """Map every target's UUID to its host count, paging past gvmd's row cap.
+def _fetch_target_host_counts(gmp: Any, needed: set[str] | None = None) -> dict[str, int | None]:
+    """Map target UUIDs to host counts, paging past gvmd's row cap.
 
     gvmd clamps rows=-1 to the account's Max Rows Per Page (1000 by default), so
     pages are requested until <target_count><filtered> is reached. The loop never
     waits for an empty page: gvmd answers a first= beyond the end by silently
     restarting at first=1, so it also stops if <targets start> is not the offset
     that was asked for.
+
+    With `needed`, paging stops as soon as every UUID in it has been seen; None
+    reads every target. At most cfg.target_max_pages pages are read (0 = no
+    limit), so a large estate costs a bounded number of GMP calls; a target past
+    the cap is simply absent, which callers report as host_count null.
     """
     counts: dict[str, int | None] = {}
+    if needed is not None and not needed:
+        return counts
+    cap = cfg.target_max_pages
     first = 1
+    pages = 0
     while True:
         response = gmp.get_targets(filter_string=f"rows=-1 first={first}")
+        pages += 1
         page = response.findall("target")
         counts.update(_target_host_counts(response))
         total = _elem_int(response, "target_count/filtered")
@@ -234,6 +244,14 @@ def _fetch_target_host_counts(gmp: Any) -> dict[str, int | None]:
             return counts
         first += len(page)
         if first > total:
+            return counts
+        if needed is not None and needed <= counts.keys():
+            return counts
+        if cap > 0 and pages >= cap:
+            logger.warning(
+                "target paging capped",
+                extra={"cap": cap, "resolved": len(counts), "total": total},
+            )
             return counts
 
 
@@ -616,9 +634,11 @@ async def list_tasks(filter_string: str = "") -> list[dict[str, Any]] | dict[str
         with gmp_session() as gmp:
             response = gmp.get_tasks(filter_string=filter_string)
             # Task XML carries the target's id and name but not its hosts, so the
-            # target list is fetched in the same session to resolve host_count.
+            # target list is fetched in the same session to resolve host_count —
+            # only until the targets these tasks reference have all been seen.
+            needed = {_elem_attr(t, "target", "id") for t in response.findall("task")} - {""}
             try:
-                return response, _fetch_target_host_counts(gmp)
+                return response, _fetch_target_host_counts(gmp, needed)
             except GvmError as target_err:
                 # An account that can read tasks but not targets still gets its task
                 # list; host_count degrades to null ("unresolved"), as in

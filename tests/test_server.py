@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import threading
 import xml.etree.ElementTree as ET
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -24,6 +26,7 @@ from openvas_mcp.server import (
 
 _VALID_UUID = "12345678-1234-1234-1234-123456789abc"
 _VALID_UUID2 = "abcdef12-abcd-abcd-abcd-abcdef123456"
+_VALID_UUID3 = "0f0f0f0f-0f0f-0f0f-0f0f-0f0f0f0f0f0f"
 
 
 # ---------------------------------------------------------------------------
@@ -387,14 +390,71 @@ class TestListTasks:
 
     async def test_target_paging_stops_when_gvmd_restarts_at_first_page(self, gmp_session_mock):
         """gvmd answers a first= past the end with page one again, never an empty page."""
-        gmp_session_mock.get_tasks.return_value = _task_xml()
+        # The task's target is never found, so only the restart check ends the loop.
+        gmp_session_mock.get_tasks.return_value = _task_xml(target_id=_VALID_UUID3)
         gmp_session_mock.get_targets.side_effect = [
             _targets_page_xml([(_VALID_UUID, "1")], start=1, filtered=3),
             _targets_page_xml([(_VALID_UUID, "1")], start=1, filtered=3),
         ]
         row = (await list_tasks())[0]
-        assert row["host_count"] == 1
+        assert row["host_count"] is None
         assert gmp_session_mock.get_targets.call_count == 2
+
+    async def test_target_paging_stops_once_referenced_targets_are_seen(self, gmp_session_mock):
+        gmp_session_mock.get_tasks.return_value = _task_xml(target_id=_VALID_UUID)
+        gmp_session_mock.get_targets.side_effect = [
+            _targets_page_xml([(_VALID_UUID, "1")], start=1, filtered=2),
+            _targets_page_xml([(_VALID_UUID2, "254")], start=2, filtered=2),
+        ]
+        row = (await list_tasks())[0]
+        assert row["host_count"] == 1
+        assert gmp_session_mock.get_targets.call_count == 1
+
+    async def test_target_paging_capped_degrades_to_null(
+        self, gmp_session_mock, monkeypatch, caplog
+    ):
+        """Past GVM_TARGET_MAX_PAGES the remaining tasks get host_count null."""
+        from openvas_mcp import server
+
+        monkeypatch.setattr(server.cfg, "target_max_pages", 2)
+        gmp_session_mock.get_tasks.return_value = _task_xml(target_id=_VALID_UUID3)
+        gmp_session_mock.get_targets.side_effect = [
+            _targets_page_xml([(_VALID_UUID, "1")], start=1, filtered=3),
+            _targets_page_xml([(_VALID_UUID2, "2")], start=2, filtered=3),
+            _targets_page_xml([(_VALID_UUID3, "3")], start=3, filtered=3),
+        ]
+        with caplog.at_level("WARNING", logger="openvas_mcp.server"):
+            rows = await list_tasks()
+        assert isinstance(rows, list)
+        assert rows[0]["host_count"] is None
+        assert gmp_session_mock.get_targets.call_count == 2
+        assert any(r.getMessage() == "target paging capped" for r in caplog.records)
+
+    async def test_zero_target_page_cap_is_unlimited(self, gmp_session_mock, monkeypatch):
+        from openvas_mcp import server
+
+        monkeypatch.setattr(server.cfg, "target_max_pages", 0)
+        gmp_session_mock.get_tasks.return_value = _task_xml(target_id=_VALID_UUID3)
+        gmp_session_mock.get_targets.side_effect = [
+            _targets_page_xml([(_VALID_UUID, "1")], start=1, filtered=3),
+            _targets_page_xml([(_VALID_UUID2, "2")], start=2, filtered=3),
+            _targets_page_xml([(_VALID_UUID3, "3")], start=3, filtered=3),
+        ]
+        row = (await list_tasks())[0]
+        assert row["host_count"] == 3
+        assert gmp_session_mock.get_targets.call_count == 3
+
+    async def test_no_tasks_fetches_no_targets(self, gmp_session_mock):
+        gmp_session_mock.get_tasks.return_value = ET.fromstring("<get_tasks_response/>")
+        assert await list_tasks() == []
+        gmp_session_mock.get_targets.assert_not_called()
+
+    async def test_task_without_target_fetches_no_targets(self, gmp_session_mock):
+        """A container task names no target, so there is nothing to resolve."""
+        gmp_session_mock.get_tasks.return_value = _task_xml(target_id="")
+        row = (await list_tasks())[0]
+        assert row["host_count"] is None
+        gmp_session_mock.get_targets.assert_not_called()
 
     async def test_unreadable_targets_degrade_to_null_host_count(self, gmp_session_mock):
         """An account that can read tasks but not targets keeps list_tasks."""
@@ -1161,6 +1221,87 @@ class TestStartScanConcurrentLimit:
             assert result["status"] == "started"
         finally:
             set_policy(original)
+
+
+class TestScanStartLockSerialisation:
+    """_scan_start_lock must serialise the concurrency probe and the start.
+
+    gvmd only reports the first scan as Running once its start completes, so
+    without the lock a second launch would probe in that window, see a free slot
+    and start too.
+    """
+
+    @pytest.mark.parametrize(
+        ("first", "second"),
+        [
+            ("start_scan", "start_scan"),
+            ("start_task", "start_task"),
+            ("start_scan", "start_task"),
+        ],
+    )
+    async def test_second_launch_waits_and_sees_first(
+        self, gmp_session_mock, monkeypatch, first, second
+    ):
+        from openvas_mcp import server
+
+        # An asyncio.Lock binds to the first event loop it waits on, and each test
+        # runs in its own loop; the tools read the module global at call time.
+        monkeypatch.setattr(server, "_scan_start_lock", asyncio.Lock())
+        entered = threading.Event()
+        release = threading.Event()
+        start_calls: list[str] = []
+        running: list[str] = []
+
+        def _get_tasks(filter_string: str = "") -> ET.Element:
+            rows = "".join(f'<task id="{t}"><status>Running</status></task>' for t in running)
+            return ET.fromstring(f"<get_tasks_response>{rows}</get_tasks_response>")
+
+        def _start(task_id: str) -> ET.Element:
+            start_calls.append(task_id)
+            if len(start_calls) == 1:
+                entered.set()
+                release.wait(timeout=5)
+            running.append(task_id)
+            return _start_task_xml()
+
+        gmp_session_mock.get_tasks.side_effect = _get_tasks
+        gmp_session_mock.get_task.return_value = _task_xml(status="Done")
+        gmp_session_mock.create_task.return_value = ET.fromstring(
+            f'<create_task_response id="{_VALID_UUID}"/>'
+        )
+        gmp_session_mock.start_task.side_effect = _start
+        launch = {
+            "start_scan": lambda: start_scan(name="scan", target_id=_VALID_UUID),
+            "start_task": lambda: start_task(task_id=_VALID_UUID),
+        }
+
+        original = get_policy()
+        set_policy(
+            Policy(
+                default_policy=ClientPolicy(
+                    allowed_tools=["*"],
+                    allowed_cidrs=["*"],
+                    max_concurrent_scans=1,
+                )
+            )
+        )
+        try:
+            a = asyncio.create_task(launch[first]())
+            assert await asyncio.to_thread(entered.wait, 5)
+            b = asyncio.create_task(launch[second]())
+            # Give the second launch ample time to probe, were it not blocked.
+            await asyncio.sleep(0.2)
+            assert gmp_session_mock.get_tasks.call_count == 1
+            release.set()
+            result_a, result_b = await asyncio.gather(a, b)
+        finally:
+            release.set()
+            set_policy(original)
+
+        assert result_a["status"] == "started"
+        assert result_b["error"] is True
+        assert result_b["code"] == "rate_limited"
+        assert len(start_calls) == 1
 
 
 class TestStartTaskConcurrentLimit:
